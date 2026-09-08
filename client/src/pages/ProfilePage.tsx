@@ -226,6 +226,7 @@ const ProfilePage: React.FC = () => {
   const [success, setSuccess] = useState<string>('');
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [userAgreements, setUserAgreements] = useState<UserAgreement[]>([]);
+  const [myPendingAssignments, setMyPendingAssignments] = useState<{ id: number; title: string; version: string }[]>([]);
 
   // Check if viewing own profile (handle both username and ID formats)
   const isOwnProfile = username?.startsWith('id:') 
@@ -280,6 +281,16 @@ const ProfilePage: React.FC = () => {
             setUserAgreements(agreements);
           } catch (error) {
             console.error('Failed to load agreement information:', error);
+          }
+        }
+
+        // Own profile: surface agreements assigned to me that still need signing
+        if (isOwnProfile) {
+          try {
+            const assignments = await agreementsApi.getMyAssignments();
+            setMyPendingAssignments(assignments.filter((a) => a.status === 'pending'));
+          } catch (error) {
+            console.error('Failed to load agreement assignments:', error);
           }
         }
 
@@ -614,23 +625,29 @@ const ProfilePage: React.FC = () => {
 
                 {userAgreements.length > 0 ? (
                   <div className="space-y-2">
-                    {userAgreements.map((agreement) => (
-                      <div key={agreement.id} className="flex items-center justify-between p-3 bg-white rounded border">
+                    {userAgreements.map((agreement) => {
+                      const isVoided = (agreement as UserAgreement & { status?: string }).status === 'voided';
+                      return (
+                      <div key={agreement.id} className={`flex items-center justify-between p-3 rounded border ${isVoided ? 'bg-gray-100 opacity-70' : 'bg-white'}`}>
                         <div className="flex items-center">
-                          <CheckCircle className="h-4 w-4 text-green-500 mr-2" />
+                          {isVoided
+                            ? <AlertTriangle className="h-4 w-4 text-gray-400 mr-2" />
+                            : <CheckCircle className="h-4 w-4 text-green-500 mr-2" />}
                           <div>
-                            <span className="font-medium text-gray-900">
+                            <span className={`font-medium ${isVoided ? 'text-gray-500 line-through' : 'text-gray-900'}`}>
                               {agreement.title || `Version ${agreement.version}`}
                             </span>
                             <span className={`ml-2 px-2 py-0.5 text-xs rounded-full font-medium ${
-                              agreement.agreement_type === 'employment' ? 'bg-purple-100 text-purple-700'
+                              isVoided ? 'bg-gray-200 text-gray-600'
+                              : agreement.agreement_type === 'employment' ? 'bg-purple-100 text-purple-700'
                               : agreement.agreement_type === 'custom' ? 'bg-blue-100 text-blue-700'
                               : 'bg-gray-100 text-gray-700'
                             }`}>
-                              {agreement.agreement_type || 'team'}
+                              {isVoided ? 'voided' : (agreement.agreement_type || 'team')}
                             </span>
                             <p className="text-sm text-gray-500">
                               v{agreement.version} • Signed on {new Date(agreement.signed_at).toLocaleDateString()} as "{agreement.full_name}"
+                              {isVoided ? ' • signature voided — no legal effect' : ''}
                             </p>
                           </div>
                         </div>
@@ -643,25 +660,37 @@ const ProfilePage: React.FC = () => {
                           </Link>
                         )}
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
-                ) : (
-                  <div className="flex items-center p-3 bg-yellow-50 border border-yellow-200 rounded">
-                    <AlertTriangle className="h-4 w-4 text-yellow-600 mr-2" />
-                    <div>
-                      <span className="font-medium text-yellow-800">Agreement Required</span>
-                      <p className="text-sm text-yellow-700">
-                        {isOwnProfile ? 'You must sign the team agreement to access the platform.' : 'This user has not signed the team agreement yet.'}
-                      </p>
-                    </div>
-                    {isOwnProfile && (
-                      <Link 
-                        to="/agreement"
-                        className="ml-auto px-3 py-1 bg-yellow-600 text-white text-sm rounded hover:bg-yellow-700"
-                      >
-                        Sign Agreement
-                      </Link>
-                    )}
+                ) : myPendingAssignments.length === 0 ? (
+                  <p className="text-sm text-gray-500 p-3">
+                    {isOwnProfile
+                      ? 'No signed agreements on file. Nothing currently requires your signature — anything that does will be assigned to you and show up here.'
+                      : 'No signed agreements on file for this user.'}
+                  </p>
+                ) : null}
+
+                {/* Agreements assigned to me that still need signing (own profile only).
+                    Never point people at the legacy /agreement page — only at their
+                    own assignments. */}
+                {isOwnProfile && myPendingAssignments.length > 0 && (
+                  <div className="mt-2 space-y-2">
+                    {myPendingAssignments.map((assignment) => (
+                      <div key={assignment.id} className="flex items-center p-3 bg-yellow-50 border border-yellow-200 rounded">
+                        <AlertTriangle className="h-4 w-4 text-yellow-600 mr-2" />
+                        <div>
+                          <span className="font-medium text-yellow-800">Awaiting your signature</span>
+                          <p className="text-sm text-yellow-700">{assignment.title}</p>
+                        </div>
+                        <Link
+                          to={`/agreements/${assignment.id}`}
+                          className="ml-auto px-3 py-1 bg-yellow-600 text-white text-sm rounded hover:bg-yellow-700"
+                        >
+                          Review & Sign
+                        </Link>
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>

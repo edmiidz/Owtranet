@@ -57,6 +57,7 @@ const AgreementPage: React.FC = () => {
   const [error, setError] = useState<string>('');
   const [successMessage, setSuccessMessage] = useState<string>('');
   const [retryCount, setRetryCount] = useState(0);
+  const [noAgreementRequired, setNoAgreementRequired] = useState(false);
 
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
@@ -98,8 +99,26 @@ const AgreementPage: React.FC = () => {
           }
           setAssignment(detail);
         } else {
-          // Legacy team-agreement flow, unchanged in behaviour
+          // Legacy team-agreement flow. This page must never collect a signature
+          // from someone whose agreements are individually assigned — send them
+          // to their pending assignment instead.
           if (user?.role !== 'pending_agreement') {
+            try {
+              const assignments = await agreementsApi.getMyAssignments();
+              const pending = assignments.find((a) => a.status === 'pending');
+              if (pending) {
+                navigate(`/agreements/${pending.id}`, { replace: true });
+                return;
+              }
+              if (assignments.length > 0) {
+                // All their assigned agreements are handled; the team agreement
+                // does not apply to them.
+                navigate('/dashboard', { replace: true });
+                return;
+              }
+            } catch {
+              // proceed with the checks below
+            }
             try {
               const status = await agreementsApi.getAgreementStatus();
               if (status.has_signed) {
@@ -110,8 +129,16 @@ const AgreementPage: React.FC = () => {
               // proceed with display
             }
           }
-          const currentAgreement = await agreementsApi.getCurrentAgreement();
-          setAgreement(currentAgreement);
+          const currentResp = await fetch('/api/agreements/current');
+          if (currentResp.status === 404) {
+            // No agreement version is active: nothing to sign.
+            setNoAgreementRequired(true);
+            return;
+          }
+          if (!currentResp.ok) {
+            throw new Error('Failed to fetch current agreement');
+          }
+          setAgreement(await currentResp.json());
         }
         setFullName(user?.name || '');
         setEmail(user?.email || '');
@@ -207,6 +234,30 @@ const AgreementPage: React.FC = () => {
         <div className="text-center">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-4"></div>
           <p className="text-gray-600">Loading agreement...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (noAgreementRequired) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center max-w-md">
+          <CheckCircle className="h-16 w-16 text-green-500 mx-auto mb-4" />
+          <h2 className="text-xl font-semibold text-gray-900 mb-2">No Agreement Required</h2>
+          <p className="text-gray-600">
+            There is nothing for you to sign here. If an agreement ever needs your
+            signature, it will be assigned to you directly and you'll get an email
+            with a link to it.
+          </p>
+          <div className="mt-4">
+            <button
+              onClick={() => navigate('/dashboard')}
+              className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+            >
+              Go to Dashboard
+            </button>
+          </div>
         </div>
       </div>
     );
