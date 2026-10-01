@@ -5,6 +5,15 @@ upgrade needs. To upgrade any instance from any earlier version, follow
 [Upgrading an existing instance](README.md#upgrading-an-existing-instance):
 `node scripts/check-schema.js` names every migration your database still needs.
 
+## Unreleased
+
+### Changes
+
+- **Direct messages show the time of day** (#36). Instead of "3h ago" or a
+  bare date, messages and the conversation list show `2:16 PM` for today,
+  `Yesterday 3:40 PM`, or `2026-09-28 3:40 PM` for older messages. Hover for
+  the full date, time and time zone.
+
 ## 1.1.1 — 2026-11-18
 
 ### Upgrade steps (from 1.1.0)
