@@ -5,6 +5,19 @@ upgrade needs. To upgrade any instance from any earlier version, follow
 [Upgrading an existing instance](README.md#upgrading-an-existing-instance):
 `node scripts/check-schema.js` names every migration your database still needs.
 
+## Unreleased
+
+### Fixes
+
+- **Direct message threads open at the newest message** (#37). Opening a long
+  thread used to load its whole history and scroll down from the first message,
+  which could take seconds, and background refreshes pulled readers back down
+  while they read older messages. Threads now open at the bottom straight away,
+  load the newest 50 messages, and fetch earlier ones as you scroll up.
+  `GET /api/messages/conversations/:id` accepts optional `limit` (max 200) and
+  `before_id`; without them it returns the full history as before, so the
+  mobile app and other API clients are unaffected.
+
 ## 1.1.1 — 2026-11-18
 
 ### Upgrade steps (from 1.1.0)
