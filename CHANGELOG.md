@@ -5,6 +5,16 @@ upgrade needs. To upgrade any instance from any earlier version, follow
 [Upgrading an existing instance](README.md#upgrading-an-existing-instance):
 `node scripts/check-schema.js` names every migration your database still needs.
 
+## Unreleased
+
+### Fixes
+
+- **Admins no longer get a direct message for every deliverable submitted
+  through the API** (#40). Each `POST /api/v1/deliverables` used to DM every
+  admin, and each DM became a push notification, so automated integrations
+  flooded admins' phones. API submissions still appear in the Investment
+  Tracker for review.
+
 ## 1.1.1 — 2026-11-18
 
 ### Upgrade steps (from 1.1.0)
