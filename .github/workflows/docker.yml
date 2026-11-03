@@ -1,0 +1,43 @@
+name: Docker
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  compose-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Write CI .env
+        run: |
+          cp .env.docker.example .env
+          sed -i "s/^JWT_SECRET=.*/JWT_SECRET=$(openssl rand -hex 32)/" .env
+          sed -i "s/^DB_PASSWORD=.*/DB_PASSWORD=$(openssl rand -hex 16)/" .env
+          sed -i "s/^ADMIN_EMAIL=.*/ADMIN_EMAIL=ci@example.com/" .env
+          sed -i "s/^ADMIN_PASSWORD=.*/ADMIN_PASSWORD=ci-password-123/" .env
+
+      - name: Build and start
+        run: docker compose up -d --build
+
+      - name: Wait for the app
+        run: |
+          for i in $(seq 1 60); do
+            curl -fsS http://localhost:3006/api/config/branding && exit 0
+            sleep 3
+          done
+          docker compose logs app
+          exit 1
+
+      - name: Web app is served and the admin can sign in
+        run: |
+          curl -fsS http://localhost:3006/ | grep -q '<div id="root"'
+          curl -fsS -X POST http://localhost:3006/api/auth/login \
+            -H 'Content-Type: application/json' -H 'Origin: http://localhost:3006' \
+            -d '{"email":"ci@example.com","password":"ci-password-123"}' | grep -q '"token"'
+
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs

@@ -1,0 +1,153 @@
+{
+  "expo": {
+    "name": "Owtranet",
+    "slug": "owtranet-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "intranet",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0f172a"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.example.owtranet",
+      "infoPlist": {
+        "UIBackgroundModes": [
+          "audio"
+        ],
+        "NSCameraUsageDescription": "Take a photo of a receipt to file an expense.",
+        "NSPhotoLibraryUsageDescription": "Attach receipts, documents and a profile photo.",
+        "NSMicrophoneUsageDescription": "Talk to the intranet AI assistant on a voice call.",
+        "ITSAppUsesNonExemptEncryption": false
+      },
+      "buildNumber": "1",
+      "associatedDomains": [
+        "applinks:intranet.example.com"
+      ]
+    },
+    "android": {
+      "package": "com.example.owtranet",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png",
+        "backgroundColor": "#0f172a"
+      },
+      "permissions": [
+        "CAMERA",
+        "READ_MEDIA_IMAGES",
+        "RECORD_AUDIO",
+        "POST_NOTIFICATIONS",
+        "MODIFY_AUDIO_SETTINGS",
+        "BLUETOOTH",
+        "BLUETOOTH_CONNECT"
+      ],
+      "blockedPermissions": [
+        "android.permission.SYSTEM_ALERT_WINDOW"
+      ],
+      "edgeToEdgeEnabled": true,
+      "versionCode": 1,
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "intranet.example.com"
+            },
+            {
+              "pathPrefix": "/dashboard"
+            },
+            {
+              "pathPrefix": "/forum"
+            },
+            {
+              "pathPrefix": "/tasks"
+            },
+            {
+              "pathPrefix": "/investment-tracker"
+            },
+            {
+              "pathPrefix": "/ledger"
+            },
+            {
+              "pathPrefix": "/profile"
+            },
+            {
+              "pathPrefix": "/search"
+            },
+            {
+              "pathPrefix": "/messages"
+            },
+            {
+              "pathPrefix": "/group-chat"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        }
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro"
+    },
+    "plugins": [
+      "./plugins/with-uiscene-lifecycle.js",
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#2563eb"
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Attach receipts, documents and a profile photo.",
+          "cameraPermission": "Take a photo of a receipt to file an expense."
+        }
+      ],
+      "expo-audio",
+      [
+        "expo-share-intent",
+        {
+          "iosActivationRules": {
+            "NSExtensionActivationSupportsText": true,
+            "NSExtensionActivationSupportsWebURLWithMaxCount": 1,
+            "NSExtensionActivationSupportsWebPageWithMaxCount": 1
+          },
+          "iosShareExtensionName": "Owtranet Share",
+          "androidIntentFilters": [
+            "text/*"
+          ]
+        }
+      ],
+      [
+        "@livekit/react-native-expo-plugin",
+        {
+          "android": {
+            "audioType": "communication"
+          }
+        }
+      ],
+      "@config-plugins/react-native-webrtc"
+    ],
+    "extra": {
+      "defaultWorkspaceUrl": "https://intranet.example.com",
+      "eas": {
+        "projectId": ""
+      }
+    }
+  }
+}

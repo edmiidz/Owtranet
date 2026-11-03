@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Extension Test Page</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        .test-section {
+            margin: 30px 0;
+            padding: 20px;
+            border: 1px solid #e1e5e9;
+            border-radius: 8px;
+        }
+        .test-button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        .test-button:hover {
+            background: #5a6fd8;
+        }
+        .result {
+            margin-top: 10px;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 4px;
+            font-family: monospace;
+        }
+        .success { background: #d4edda; color: #155724; }
+        .error { background: #f8d7da; color: #721c24; }
+        .info { background: #d1ecf1; color: #0c5460; }
+    </style>
+</head>
+<body>
+    <h1>🧪 Intranet Post Creator - Test Page</h1>
+    <p>This page helps test the extension's functionality. Use it to verify that the extension can detect page context and handle various scenarios.</p>
+
+    <div class="test-section">
+        <h2>🔍 Context Detection Test</h2>
+        <p>This page simulates a monitoring dashboard to test context detection.</p>
+        <div id="context-result" class="result info">
+            Page context will be detected here when the extension is active.
+        </div>
+    </div>
+
+    <div class="test-section">
+        <h2>📝 Form Validation Test</h2>
+        <p>Test the extension's form validation logic.</p>
+        <button class="test-button" id="btn-test-validation">Test Form Validation</button>
+        <div id="validation-result" class="result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>🔌 API Connection Test</h2>
+        <p>Test the connection to your intranet API.</p>
+        <button class="test-button" id="btn-test-api">Test API Connection</button>
+        <div id="api-result" class="result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>📊 Template Generation Test</h2>
+        <p>Test the quick template functionality.</p>
+        <button class="test-button" id="btn-test-templates">Test Templates</button>
+        <div id="template-result" class="result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>💾 Storage Test</h2>
+        <p>Test Chrome storage functionality.</p>
+        <button class="test-button" id="btn-test-storage">Test Storage</button>
+        <div id="storage-result" class="result"></div>
+    </div>
+
+    <script src="test.js"></script>
+</body>
+</html>

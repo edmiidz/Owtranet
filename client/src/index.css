@@ -1,0 +1,226 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Print styles for agreement details */
+@media print {
+  @page {
+    margin: 0.75in;
+    size: letter;
+  }
+  
+  body {
+    font-size: 11pt !important;
+    line-height: 1.4 !important;
+    color: black !important;
+  }
+  
+  .no-print, .btn, button, nav, .sidebar {
+    display: none !important;
+  }
+  
+  /* Print-specific layout */
+  .print\:block {
+    display: block !important;
+  }
+  
+  .hidden.print\:block {
+    display: block !important;
+  }
+  
+  /* Agreement content styling */
+  #printable-agreement {
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: white !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+  }
+  
+  #printable-agreement h1 {
+    font-size: 18pt !important;
+    margin-bottom: 12pt !important;
+    page-break-after: avoid;
+  }
+  
+  #printable-agreement h2 {
+    font-size: 14pt !important;
+    margin-bottom: 10pt !important;
+    page-break-after: avoid;
+  }
+  
+  #printable-agreement h3 {
+    font-size: 12pt !important;
+    margin-bottom: 8pt !important;
+    page-break-after: avoid;
+  }
+  
+  #printable-agreement p {
+    margin-bottom: 6pt !important;
+  }
+  
+  #printable-agreement .prose {
+    max-width: none !important;
+  }
+  
+  /* Ensure all text is visible */
+  * {
+    color: black !important;
+    background: white !important;
+  }
+}
+
+@layer base {
+  html {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  }
+  
+  body {
+    @apply bg-gray-50 text-gray-900;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply px-4 py-2 rounded-lg font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2;
+  }
+  
+  .btn-primary {
+    @apply bg-primary-600 text-white hover:bg-primary-700 focus:ring-primary-500;
+  }
+  
+  .btn-secondary {
+    @apply bg-gray-200 text-gray-900 hover:bg-gray-300 focus:ring-gray-500;
+  }
+  
+  .btn-danger {
+    @apply bg-red-600 text-white hover:bg-red-700 focus:ring-red-500;
+  }
+  
+  .form-input {
+    @apply block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500;
+  }
+  
+  .card {
+    @apply bg-white rounded-lg shadow-sm border border-gray-200;
+  }
+
+  /* Modern card styling */
+  .card-modern {
+    @apply bg-white rounded-xl shadow-md border border-gray-100 transition-all duration-300 hover:shadow-xl;
+  }
+
+  /* News stream animations */
+  @keyframes slideInUp {
+    from {
+      opacity: 0;
+      transform: translateY(20px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .animate-slide-in {
+    animation: slideInUp 0.5s ease-out;
+  }
+
+  /* Gradient text animation */
+  @keyframes gradientShift {
+    0%, 100% {
+      background-position: 0% 50%;
+    }
+    50% {
+      background-position: 100% 50%;
+    }
+  }
+
+  .animate-gradient {
+    background-size: 200% 200%;
+    animation: gradientShift 3s ease infinite;
+  }
+
+  /* Card hover effects */
+  .hover-lift {
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .hover-lift:hover {
+    transform: translateY(-4px);
+  }
+}
+
+@layer utilities {
+  /* Line clamp utilities */
+  .line-clamp-3 {
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+  }
+
+  /* Forum content image styling */
+  .prose img {
+    @apply max-w-full;
+    max-width: 600px !important;
+    width: auto !important;
+    height: auto !important;
+    cursor: pointer !important;
+    border-radius: 8px !important;
+    border: 1px solid #e5e7eb !important;
+    transition: transform 0.2s, box-shadow 0.2s !important;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1) !important;
+  }
+  
+  .prose img:hover {
+    transform: scale(1.02) !important;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1) !important;
+  }
+  
+  /* Ensure images are responsive */
+  .prose img {
+    @apply block mx-auto my-4;
+  }
+}
+
+/* Full-size image modal: must override the global `.prose img { max-width:600px }`
+   cap above (which otherwise clamps the lightbox image to 600px even when opened
+   to "full size"). Doubled class + !important guarantees it wins on specificity
+   regardless of where the modal mounts in the DOM. */
+.image-modal-full.image-modal-full {
+  max-width: 95vw !important;
+  max-height: 95vh !important;
+  width: auto !important;
+  height: auto !important;
+  border: none !important;
+  border-radius: 0.5rem !important;
+  cursor: default !important;
+}
+.image-modal-full.image-modal-full:hover {
+  transform: none !important;
+}
+/* Embedded videos in post / comment content (server markdownToHtml → videoEmbedHtml) */
+.embed-video {
+  position: relative;
+  width: 100%;
+  max-width: 640px;
+  aspect-ratio: 16 / 9;
+  margin: 0.75rem 0 1rem;
+  border-radius: 0.5rem;
+  overflow: hidden;
+  background: #000;
+}
+.embed-video.embed-portrait {
+  max-width: 360px;
+  aspect-ratio: 9 / 16;
+}
+.embed-video iframe {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}

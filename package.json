@@ -1,0 +1,51 @@
+{
+  "name": "owtranet",
+  "version": "1.0.0",
+  "description": "Owtranet \u2014 self-hosted team intranet (forum, messaging, tasks, webmail, agreements, AI agents)",
+  "author": "Nik Edmiidz (https://triluna.app/edmiidz/booknow)",
+  "license": "MIT",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js",
+    "build": "cd client && npm run build",
+    "setup": "npm install && cd client && npm install"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.65.0",
+    "@octokit/rest": "^20.0.2",
+    "axios": "^1.12.1",
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "csv-stringify": "^6.6.0",
+    "dompurify": "^3.0.8",
+    "dotenv": "^16.6.1",
+    "express": "^4.18.2",
+    "express-rate-limit": "^7.1.5",
+    "express-validator": "^7.0.1",
+    "helmet": "^7.1.0",
+    "imap-simple": "^5.1.0",
+    "isomorphic-dompurify": "^2.3.0",
+    "jsonwebtoken": "^9.0.2",
+    "mailparser": "^3.7.4",
+    "marked": "^11.1.1",
+    "multer": "^1.4.5-lts.1",
+    "mysql2": "^3.6.5",
+    "node-imap": "^0.9.6",
+    "nodemailer": "^6.9.7",
+    "pdf-parse": "^1.1.1",
+    "sharp": "^0.33.1",
+    "smtp-server": "^3.14.0",
+    "winston": "^3.11.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/edmiidz/Owtranet.git"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

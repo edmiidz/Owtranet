@@ -1,0 +1,21 @@
+node_modules/
+.env
+.env.local
+.env.*.local
+*.log
+logs/
+uploads/
+dist/
+build/
+.DS_Store
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+client/node_modules/
+client/dist/
+# FCM service account (server-side secret — never commit)
+fcm-service-account*.json
+secrets/
+.deploy.env

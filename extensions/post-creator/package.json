@@ -1,0 +1,54 @@
+{
+  "name": "owtranet-post-creator",
+  "version": "1.0.3",
+  "description": "Chrome extension for creating forum posts on an Owtranet intranet",
+  "main": "popup.js",
+  "scripts": {
+    "build": "echo 'Chrome extension - no build step required'",
+    "test": "echo 'Open test.html in browser to test functionality'",
+    "package": "zip -r owtranet-extension.zip . -x '*.git*' '*.DS_Store' 'node_modules/*' '*.zip'"
+  },
+  "keywords": [
+    "chrome-extension",
+    "intranet",
+    "forum",
+    "posts",
+    "monitoring",
+    "cicd"
+  ],
+  "author": "Nik Edmiidz",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/edmiidz/Owtranet.git"
+  },
+  "engines": {
+    "chrome": ">=88.0.0"
+  },
+  "manifest": {
+    "version": 3,
+    "permissions": [
+      "activeTab",
+      "storage",
+      "identity"
+    ],
+    "host_permissions": [
+      "https://intranet.example.com/*"
+    ]
+  },
+  "files": [
+    "manifest.json",
+    "popup.html",
+    "popup.css",
+    "popup.js",
+    "background.js",
+    "content.js",
+    "config.js",
+    "icons/*",
+    "README.md",
+    "INSTALL.md",
+    "test.html"
+  ],
+  "devDependencies": {},
+  "dependencies": {}
+}

@@ -1,0 +1,20 @@
+{
+  "name": "owtranet-webmail-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Owtranet webmail MCP: read/search + draft creation via the intranet's /api/webmail/* endpoints. Stdio entrypoint (index.js) for local clients, Streamable-HTTP entrypoint (http.js) for ElevenLabs agents.",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "start:http": "node http.js",
+    "login": "node scripts/login.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "jsonwebtoken": "^9.0.2"
+  },
+  "engines": {
+    "node": ">=20.12"
+  }
+}

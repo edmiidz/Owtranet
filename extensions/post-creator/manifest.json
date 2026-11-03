@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "Owtranet Post Creator",
+  "version": "1.0.3",
+  "description": "Create forum posts on your Owtranet intranet directly from Chrome",
+  "permissions": [
+    "activeTab",
+    "storage",
+    "identity",
+    "contextMenus"
+  ],
+  "host_permissions": [
+    "https://intranet.example.com/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Create Intranet Post"
+  },
+  "options_page": "test.html",
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"]
+    }
+  ]
+}
