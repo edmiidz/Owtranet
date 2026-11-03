@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { Mail, CheckCircle, XCircle, Clock, AlertCircle } from 'lucide-react';
 import { useAuthStore } from '../stores/authStore';
 import { useBrandingStore } from '../stores/brandingStore';
-import { usesSelfHostedMail } from '../utils/emailProvider';
+import { effectiveEmailProvider, externalProviderName } from '../utils/emailProvider';
 import { emailRequestsApi } from '../utils/api';
 import type { EmailRequest } from '../types';
 
@@ -32,7 +32,7 @@ type EmailRequestFormData = z.infer<typeof emailRequestSchema>;
 const EmailRequestPage: React.FC = () => {
   const { user } = useAuthStore();
   const { companyName, companyEmailDomain, defaultEmailProvider } = useBrandingStore();
-  const selfHostedMail = usesSelfHostedMail(user, defaultEmailProvider);
+  const externalProvider = externalProviderName(effectiveEmailProvider(user, defaultEmailProvider));
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string>('');
   const [success, setSuccess] = useState<string>('');
@@ -62,11 +62,7 @@ const EmailRequestPage: React.FC = () => {
       }
     };
 
-    if (user?.role === 'admin') {
-      loadMyRequests();
-    } else {
-      setLoadingRequests(false);
-    }
+    loadMyRequests();
   }, [user]);
 
   const onSubmit = async (data: EmailRequestFormData) => {
@@ -91,11 +87,7 @@ const EmailRequestPage: React.FC = () => {
       setSuccess('Email request submitted successfully! Admins have been notified and will review your request.');
       reset();
       
-      // Reload requests if admin
-      if (user?.role === 'admin') {
-        const requests = await emailRequestsApi.getEmailRequests();
-        setMyRequests(requests.filter(r => r.user_id === user?.id));
-      }
+      setMyRequests(await emailRequestsApi.getEmailRequests());
     } catch (err: any) {
       setError(err.response?.data?.error || 'Failed to submit email request. Please try again.');
     } finally {
@@ -136,14 +128,14 @@ const EmailRequestPage: React.FC = () => {
         </p>
       </div>
 
-      {/* External provider: a company mailbox is only provisioned for the self-hosted option */}
-      {!selfHostedMail && (
+      {/* External provider: the mailbox is created by an admin in that provider's console */}
+      {externalProvider && (
         <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6 text-yellow-800">
           <div className="flex items-start">
             <AlertCircle className="h-6 w-6 text-yellow-600 mt-0.5 mr-3 flex-shrink-0" />
             <p>
-              Your <strong>Email &amp; Calendar Provider</strong> is set to an external service, so no @{companyEmailDomain} mailbox
-              is hosted here. To request one, switch the provider to the self-hosted option on your profile first.
+              {companyName} email runs on <strong>{externalProvider}</strong>. Once your request is approved, an admin creates
+              the mailbox in {externalProvider} and you'll receive your sign-in details at your personal email address.
             </p>
           </div>
         </div>
@@ -160,7 +152,11 @@ const EmailRequestPage: React.FC = () => {
               <li>• Provide detailed justification for why you need this email</li>
               <li>• Admin review and approval required</li>
               <li>• You'll receive email confirmation once processed</li>
-              <li>• Contact system administrator for email setup after approval</li>
+              <li>
+                • {externalProvider
+                  ? `Sign-in details for ${externalProvider} follow from an admin after approval`
+                  : 'Contact system administrator for email setup after approval'}
+              </li>
             </ul>
           </div>
         </div>

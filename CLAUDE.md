@@ -71,8 +71,12 @@ Fresh database: `db/schema.sql` → `db/seed.sql` → `node scripts/create-admin
   and `system`.
 - **Mail**: each member's provider is `users.email_provider`
   (`self_hosted` | `microsoft_365` | `google_workspace`, NULL = `DEFAULT_EMAIL_PROVIDER`).
-  Webmail and Email Requests only apply to `self_hosted`. The company address is
-  `users.company_email`.
+  Webmail and automatic mailbox provisioning only apply to `self_hosted`. Email
+  Requests work for every provider: approving one for `google_workspace` /
+  `microsoft_365` sets `users.company_email` and tells the admin to create the
+  mailbox in that provider's console (`EXTERNAL_MAILBOX_PROVIDERS` in `server.js`).
+  Members join with their **personal** address (`users.email`); the company
+  address (`users.company_email`) comes later through an Email Request.
 - **Branding**: `COMPANY_NAME` / `COMPANY_SHORT_NAME` / `COMPANY_EMAIL_DOMAIN`
   are exposed to clients by `GET /api/config/branding` (`client/src/stores/brandingStore.ts`).
   Use backtick template literals when interpolating them server-side.

@@ -828,8 +828,10 @@ function generateSlug(title) {
 
 // ===================== EMAIL & CALENDAR PROVIDER =====================
 // Each member picks where their work mailbox + calendar live. Only 'self_hosted'
-// (a Postfix/Dovecot mailbox + Nextcloud calendar on this box) unlocks the
-// Email Request flow and Webmail; Microsoft 365 / Google Workspace are external.
+// (a Postfix/Dovecot mailbox + Nextcloud calendar on this box) has Webmail and
+// automatic mailbox provisioning; Microsoft 365 / Google Workspace are external.
+// Email Requests work for every provider: for an external one, approval records
+// users.company_email and the admin creates the mailbox in that provider's console.
 // users.email_provider NULL = instance default (DEFAULT_EMAIL_PROVIDER env).
 const EMAIL_PROVIDERS = ['self_hosted', 'microsoft_365', 'google_workspace'];
 const DEFAULT_EMAIL_PROVIDER = EMAIL_PROVIDERS.includes(process.env.DEFAULT_EMAIL_PROVIDER)
@@ -841,6 +843,20 @@ const EMAIL_PROVIDER_OPTIONS = [
   { value: 'google_workspace', label: 'Google Workspace (Gmail + Google Calendar)', webmail: false },
 ];
 const isSelfHostedProvider = (provider) => (provider || DEFAULT_EMAIL_PROVIDER) === 'self_hosted';
+// Where an admin creates the mailbox for an approved request on an external provider,
+// and where the member signs in afterwards.
+const EXTERNAL_MAILBOX_PROVIDERS = {
+  google_workspace: {
+    name: 'Google Workspace',
+    adminConsoleUrl: 'https://admin.google.com/ac/users',
+    signInUrl: 'https://mail.google.com'
+  },
+  microsoft_365: {
+    name: 'Microsoft 365',
+    adminConsoleUrl: 'https://admin.microsoft.com/#/users',
+    signInUrl: 'https://outlook.office.com'
+  }
+};
 
 app.get('/api/config/branding', (req, res) => {
   res.json({
@@ -2459,14 +2475,6 @@ app.post('/api/email-requests', authenticateToken, [
   try {
     let { requested_email, justification } = req.body;
 
-    // A company mailbox is only provisioned for members on the self-hosted provider
-    const [requesterRows] = await db.execute('SELECT email_provider FROM users WHERE id = ?', [req.user.userId]);
-    if (requesterRows.length > 0 && !isSelfHostedProvider(requesterRows[0].email_provider)) {
-      return res.status(400).json({
-        error: `Your email & calendar provider is set to an external service. Switch it to the self-hosted ${COMPANY_SHORT_NAME} Mail option on your profile to request a @${COMPANY_EMAIL_DOMAIN} mailbox.`
-      });
-    }
-
     // Normalize the email - trim, lowercase, and add company domain if not present
     requested_email = requested_email.trim().toLowerCase();
     if (!requested_email.includes('@')) {
@@ -2478,15 +2486,24 @@ app.post('/api/email-requests', authenticateToken, [
       'SELECT id FROM email_requests WHERE requested_email = ?',
       [requested_email]
     );
-    
+
     if (existing.length > 0) {
       return res.status(400).json({ error: 'Email address already requested' });
+    }
+
+    // ...or already belongs to a member (e.g. set by an admin before this request existed)
+    const [taken] = await db.execute(
+      'SELECT id FROM users WHERE company_email = ? OR email = ?',
+      [requested_email, requested_email]
+    );
+    if (taken.length > 0) {
+      return res.status(400).json({ error: 'Email address is already in use' });
     }
     
     // Create request
     const [result] = await db.execute(
       'INSERT INTO email_requests (user_id, requested_email, justification) VALUES (?, ?, ?)',
-      [req.user.userId, requested_email, justification]
+      [req.user.userId, requested_email, justification || '']
     );
     
     // Notify admins in database
@@ -2559,13 +2576,14 @@ app.get('/api/email-requests', authenticateToken, async (req, res) => {
   try {
     let query = `
       SELECT er.*, u.name as requester_name, u.email as requester_email,
+             COALESCE(u.email_provider, ?) as provider,
              a.name as approver_name
       FROM email_requests er
       JOIN users u ON er.user_id = u.id
       LEFT JOIN users a ON er.approved_by = a.id
     `;
-    
-    const params = [];
+
+    const params = [DEFAULT_EMAIL_PROVIDER];
     
     // If not admin, only show user's own requests
     if (req.user.role !== 'admin') {
@@ -2596,25 +2614,73 @@ app.put('/api/email-requests/:id', authenticateToken, requireAdmin, async (req, 
     
     // Get request details before updating
     const [requests] = await db.execute(`
-      SELECT er.*, u.name as requester_name, u.email as requester_email
+      SELECT er.*, u.name as requester_name, u.email as requester_email,
+             u.email_provider as requester_email_provider
       FROM email_requests er
       JOIN users u ON er.user_id = u.id
       WHERE er.id = ?
     `, [id]);
-    
+
     if (requests.length === 0) {
       return res.status(404).json({ error: 'Email request not found' });
     }
-    
+
     const request = requests[0];
-    
+    const provider = request.requester_email_provider || DEFAULT_EMAIL_PROVIDER;
+    const external = EXTERNAL_MAILBOX_PROVIDERS[provider];
+
+    if (status === 'approved' && external) {
+      const [taken] = await db.execute(
+        'SELECT id FROM users WHERE (company_email = ? OR email = ?) AND id <> ?',
+        [request.requested_email, request.requested_email, request.user_id]
+      );
+      if (taken.length > 0) {
+        return res.status(400).json({ error: `${request.requested_email} already belongs to another member` });
+      }
+    }
+
     await db.execute(
       `UPDATE email_requests 
        SET status = ?, approved_by = ?, approved_at = NOW(), rejection_reason = ?
        WHERE id = ?`,
       [status, req.user.userId, rejection_reason || null, id]
     );
-    
+
+    // External provider (Google Workspace / Microsoft 365): nothing to provision on
+    // this server. Record the address on the member, tell them what happens next, and
+    // hand the admin the provider's console link — they create the mailbox there.
+    if (status === 'approved' && external) {
+      const requestedEmail = request.requested_email;
+      await db.execute(
+        'UPDATE users SET company_email = ?, company_email_created_at = NOW() WHERE id = ?',
+        [requestedEmail, request.user_id]
+      );
+
+      const memberMessage = `# 📧 Your @${COMPANY_EMAIL_DOMAIN} address is approved
+
+Hi ${request.requester_name}! Your request for **${requestedEmail}** has been approved.
+
+${COMPANY_NAME} email runs on **${external.name}**, so the mailbox is created there by an admin rather than on this intranet. You'll receive your ${external.name} sign-in details at your personal address (**${request.requester_email}**). Once you have them, sign in at ${external.signInUrl}.
+
+Your intranet account now shows ${requestedEmail} as your work address.`;
+
+      try {
+        await deliverDirectMessage(1, request.user_id, memberMessage);
+      } catch (dmError) {
+        console.error('Failed to send email request approval DM:', dmError);
+      }
+
+      console.log(`Email request ${id} approved for ${requestedEmail} (${provider}) — mailbox to be created in ${external.name}`);
+      return res.json({
+        message: `Request approved. Create ${requestedEmail} in ${external.name}: ${external.adminConsoleUrl}`,
+        account_created: false,
+        external_provider: provider,
+        external_provider_name: external.name,
+        admin_console_url: external.adminConsoleUrl,
+        requested_email: requestedEmail
+      });
+    }
+
     // If approved, create the email account
     // ⚠️ IMPORTANT: Read docs/EMAIL_SYSTEM_ARCHITECTURE.md before modifying this section
     // Key rules: Use virtual mail users (no system users), email address format for paths,
