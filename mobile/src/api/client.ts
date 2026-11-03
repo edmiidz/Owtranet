@@ -25,8 +25,11 @@ api.interceptors.response.use(
       return Promise.reject(error);
     }
     if (status === 401 && !url.includes('/auth/')) {
-      // Token expired / revoked → drop the session; the root layout redirects to login.
-      useAuthStore.getState().logout();
+      // Token expired / revoked → drop that account; the root layout redirects to login
+      // (or the next signed-in account). Skip a late 401 for an account we already left.
+      const sent = String(error.config?.headers?.Authorization || '');
+      const { token, logout } = useAuthStore.getState();
+      if (token && sent === `Bearer ${token}`) logout();
     }
     return Promise.reject(error);
   }
@@ -41,10 +44,10 @@ export function errorMessage(e: unknown, fallback = 'Something went wrong'): str
   return err?.message || fallback;
 }
 
-/** Absolute URL for a server-relative path such as /uploads/avatars/x.jpg */
-export function absoluteUrl(path?: string | null): string | undefined {
+/** Absolute URL for a server-relative path such as /uploads/avatars/x.jpg (on `workspaceUrl`, default the active one). */
+export function absoluteUrl(path?: string | null, workspaceUrl?: string): string | undefined {
   if (!path) return undefined;
   if (/^https?:\/\//i.test(path)) return path;
-  const base = useAuthStore.getState().workspaceUrl.replace(/\/$/, '');
+  const base = (workspaceUrl || useAuthStore.getState().workspaceUrl).replace(/\/$/, '');
   return `${base}${path.startsWith('/') ? '' : '/'}${path}`;
 }

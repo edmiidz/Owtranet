@@ -4,6 +4,7 @@ import { useRouter } from 'expo-router';
 import { agreementsApi } from '@/api';
 import { errorMessage } from '@/api/client';
 import { useAuthStore } from '@/stores/auth';
+import { signOutActiveAccount } from '@/lib/accounts';
 import { useAsync } from '@/lib/useAsync';
 import { Button, Card, ErrorBox, H1, Input, Loading, P, Screen, Small } from '@/components/ui';
 import { Markdown } from '@/components/Markdown';
@@ -11,7 +12,7 @@ import { Markdown } from '@/components/Markdown';
 /** Gate shown when the account is `pending_agreement` (mirrors the web AgreementPage). */
 export default function AgreementGate() {
   const router = useRouter();
-  const { user, login, setRequiresAgreement, logout, updateUser } = useAuthStore();
+  const { user, login, setRequiresAgreement, updateUser } = useAuthStore();
   const { data, loading, error, reload } = useAsync(() => agreementsApi.current(), []);
   const [fullName, setFullName] = useState(user?.name || '');
   const [email, setEmail] = useState(user?.email || '');
@@ -48,7 +49,7 @@ export default function AgreementGate() {
           </Card>
         </>
       ) : null}
-      <Button title="Sign out" variant="ghost" onPress={async () => { await logout(); router.replace('/login'); }} />
+      <Button title="Sign out" variant="ghost" onPress={() => { signOutActiveAccount(); }} />
     </Screen>
   );
 }
