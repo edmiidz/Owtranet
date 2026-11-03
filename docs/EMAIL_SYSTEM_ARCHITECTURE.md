@@ -77,7 +77,10 @@ sudo systemctl reload postfix
   is the canonical path: on approval it creates `/var/mail/<email>/{cur,new,tmp}`
   owned by `vmail`, appends `<email>    <email>/` to `virtual_mailbox_maps`,
   runs `postmap`, inserts `server_email_accounts` with `server_username = email`,
-  and sets `users.company_email`.
+  and sets `users.company_email`. For a member on an external provider
+  (`google_workspace` / `microsoft_365`) none of that runs: approval only sets
+  `users.company_email`, DMs the member, and returns the provider's admin-console
+  link so the admin creates the mailbox there.
 - **Admin → Company Emails** (`/api/admin/company-email/*`) links, resets and
   deletes those accounts.
 - **Legacy server-account endpoints** (`/api/email/check-availability`,

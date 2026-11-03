@@ -180,7 +180,19 @@ export interface EmailRequest {
   created_at: string;
   requester_name?: string;
   requester_email?: string;
+  /** Requester's effective mail provider (their choice or the instance default). */
+  provider?: EmailProvider;
   approver_name?: string;
+}
+
+/** PUT /api/email-requests/:id response. External providers return the console to create the mailbox in. */
+export interface EmailRequestUpdateResult {
+  message: string;
+  account_created: boolean;
+  external_provider?: EmailProvider;
+  external_provider_name?: string;
+  admin_console_url?: string;
+  requested_email?: string;
 }
 
 export interface Notification {

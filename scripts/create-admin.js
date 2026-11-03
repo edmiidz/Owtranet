@@ -4,6 +4,9 @@
  *
  *   node scripts/create-admin.js --email you@example.com --name "Your Name" [--username you]
  *
+ * Use the admin's PERSONAL address, like every other member. The company address
+ * (users.company_email) comes later through Email Request → approval.
+ *
  * Prompts for the password (or reads ADMIN_PASSWORD). Uses DB_* from .env.
  * If the email already exists, the account is promoted to admin and its
  * password reset.

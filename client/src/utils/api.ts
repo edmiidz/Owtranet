@@ -10,6 +10,7 @@ import type {
   User, 
   Deliverable,
   EmailRequest,
+  EmailRequestUpdateResult,
   Notification,
   GitHubIssue,
   SearchResults,
@@ -240,7 +241,7 @@ export const emailRequestsApi = {
   updateEmailRequest: async (id: number, data: {
     status: 'approved' | 'rejected';
     rejection_reason?: string;
-  }): Promise<ApiResponse<void>> => {
+  }): Promise<EmailRequestUpdateResult> => {
     const response = await api.put(`/email-requests/${id}`, data);
     return response.data;
   },
