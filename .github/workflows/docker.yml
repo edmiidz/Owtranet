@@ -38,6 +38,12 @@ jobs:
             -H 'Content-Type: application/json' -H 'Origin: http://localhost:3006' \
             -d '{"email":"ci@example.com","password":"ci-password-123"}' | grep -q '"token"'
 
+      - name: README upgrade command applies a migration
+        # Same command as the README's "Upgrading" step; must exit 0.
+        run: |
+          docker compose exec -T db sh -c 'mysql -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" "$MYSQL_DATABASE"' \
+            < server/migrations/add_post_editors.sql
+
       - name: Logs on failure
         if: failure()
         run: docker compose logs

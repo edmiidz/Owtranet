@@ -113,8 +113,17 @@ agreement. Data lives in the `db-data` and `uploads` Docker volumes.
   (and `OWTRANET_PORT` for the host port).
 - **Public server**: put it behind TLS (nginx, Caddy, Traefik), set `BASE_URL`
   to the `https://` address and `CSP_UPGRADE_INSECURE_REQUESTS=true`.
-- **Upgrading**: `git pull && docker compose up -d --build`, after applying any
-  new `server/migrations/*.sql` (see [Upgrading](#upgrading-an-existing-instance)).
+- **Upgrading**: pull the new code, apply each new migration to the database
+  container, then rebuild:
+  ```bash
+  git pull
+  # once per new file in server/migrations/ (migrations are idempotent)
+  docker compose exec -T db sh -c 'mysql -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" "$MYSQL_DATABASE"' \
+    < server/migrations/<new_migration>.sql
+  docker compose up -d --build
+  ```
+  `git diff --name-only HEAD@{1} -- server/migrations/` lists the migration
+  files the pull added. See also [Upgrading](#upgrading-an-existing-instance).
 
 The Docker setup runs the main app only. The optional background workers in
 `ecosystem.config.js` (radio summaries, push, scheduled mail, receipt e-mail)
