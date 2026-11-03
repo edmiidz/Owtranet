@@ -157,6 +157,22 @@ npx expo run:android
 - Before building your own app, set your bundle id / package, associated domains and EAS
   project in `mobile/app.json` — see `mobile/README.md`.
 - Session: JWT in `expo-secure-store`; the same 7-day token the web app uses.
+- **Multiple accounts** (#6, Instagram-style): the app stays signed in to several
+  workspace + user pairs at once. **More → Switch account** (or long-press the **More** tab)
+  opens `/accounts`: pick one to switch to, **Add account** to sign in elsewhere without
+  signing out, or sign out of the active one, which moves you to the next. In
+  `src/stores/auth.ts`, the account index and every token live in SecureStore
+  (`intranet.accounts`, `intranet.token.<key>`), so they survive a reinstall. The
+  user/branding/agent cache lives in AsyncStorage (`intranet.accounts.meta`).
+  `token` / `user` / `workspaceUrl` / `branding` / `aiAgent` mirror the active account, so
+  screens and the API client didn't change. The old single-session keys migrate on first
+  launch. `src/lib/accounts.ts` does the switch: it stops the radio, clears badges and
+  **unregisters the push token with the outgoing account's server**, and the root layout
+  then registers it with the new one. So **only the active account gets pushes**. The
+  `(app)` stack is keyed by account, so every screen remounts. A 401 only signs out the
+  account whose token it was sent with. Still open (phase 2 in #6): pushes for
+  inactive accounts, universal links per instance domain, and generic vs. per-org app
+  identity.
 - The `pending_agreement` 403 (`requiresAgreement`) routes to an in-app signing screen.
 - Tabs: **Home** (badges, radio teaser, action items, latest posts), **Forum** (Q&A: list,
   search, sort, post detail, replies, votes, attachments, visibility), **Radio** (player,
