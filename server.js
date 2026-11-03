@@ -19,6 +19,7 @@ const { EmailManager, EmailCrypto } = require('./emailUtils');
 const { analyzeDocument } = require('./utils/aiAnalyzer');
 const fieldCrypto = require('./utils/fieldCrypto');
 const { createAgentResponder, extractMentionTokens } = require('./server/lib/aiAgents');
+const { instancePublicDir, createPluginRouter, loadPlugins } = require('./server/lib/plugins');
 require('dotenv').config();
 
 if (!process.env.JWT_SECRET) {
@@ -176,7 +177,9 @@ app.get('/.well-known/assetlinks.json', (req, res) => {
   }]);
 });
 
-// Static files
+// Static files — an instance's public/ (INSTANCE_DIR, see docs/PLUGINS.md) wins over the build
+const INSTANCE_PUBLIC_DIR = instancePublicDir();
+if (INSTANCE_PUBLIC_DIR) app.use(express.static(INSTANCE_PUBLIC_DIR, { index: false }));
 app.use(express.static(path.join(__dirname, 'client/dist'), { index: false }));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use('/downloads', express.static(path.join(__dirname, 'public/downloads')));
@@ -13776,6 +13779,13 @@ const dbProxy = { execute: (...a) => db.execute(...a), query: (...a) => db.query
 app.use('/api/mobile', require('./server/routes/mobile')({ db: dbProxy, authenticateToken, baseCurrency: BASE_CURRENCY }));
 app.use('/api/radio', require('./server/routes/radio')({ db: dbProxy, authenticateToken, requireAdmin }));
 
+// ===================== INSTANCE PLUGINS =====================
+// Routes from $INSTANCE_DIR/plugins/*.js (docs/PLUGINS.md). The router is mounted
+// here, ahead of the SPA catch-all; plugins fill it in startServer() once the
+// database is up.
+const pluginRouter = createPluginRouter();
+app.use(pluginRouter);
+
 // Serve React app for all other routes (with dynamic branding injection)
 app.get('*', async (req, res) => {
   try {
@@ -13949,6 +13959,19 @@ function stopGitHubSyncScheduler() {
 
 async function startServer() {
   await initDatabase();
+
+  await loadPlugins({
+    router: pluginRouter,
+    app,
+    db: dbProxy,
+    auth: { authenticateToken, authenticateApiToken, requireAdmin },
+    agentResponder,
+    config: {
+      COMPANY_NAME, COMPANY_SHORT_NAME, COMPANY_EMAIL_DOMAIN, SITE_NAME, SITE_TEAM,
+      BASE_URL, BASE_CURRENCY, MAIL_SYSTEM_ADDRESS, PORT
+    },
+    helpers: { markdownToHtml }
+  });
   
   // Start GitHub sync scheduler
   startGitHubSyncScheduler();
@@ -13972,6 +13995,10 @@ process.on('SIGINT', () => {
   process.exit(0);
 });
 
-startServer().catch(console.error);
+startServer().catch(error => {
+  // e.g. a plugin failing under PLUGINS_STRICT=1 — don't sit there half-started
+  console.error('Startup failed:', error);
+  process.exit(1);
+});
 
 module.exports = app;
