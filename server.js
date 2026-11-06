@@ -19,6 +19,7 @@ const { EmailManager, EmailCrypto } = require('./emailUtils');
 const { analyzeDocument } = require('./utils/aiAnalyzer');
 const fieldCrypto = require('./utils/fieldCrypto');
 const { createAgentResponder, extractMentionTokens } = require('./server/lib/aiAgents');
+const { findUsersByEmail } = require('./server/lib/emailIdentity'); // Gmail dot-insensitive sign-in lookup
 require('dotenv').config();
 
 if (!process.env.JWT_SECRET) {
@@ -869,11 +870,8 @@ app.post('/api/auth/forgot-password', [
     const { email: rawEmail } = req.body;
     const email = rawEmail.trim().toLowerCase();
 
-    // Find user by email
-    const [users] = await db.execute(
-      'SELECT * FROM users WHERE email = ?',
-      [email]
-    );
+    // Find user by email (Gmail dots / +tags ignored if the exact address misses)
+    const users = await findUsersByEmail(db, email);
     
     // Always return success to prevent email enumeration
     if (users.length === 0) {
@@ -1017,10 +1015,10 @@ app.post('/api/auth/email-login', [
     const userAgent = req.headers['user-agent'];
 
     // Find user by email (check both personal email and company email)
-    const [users] = await db.execute(
-      'SELECT id, email, company_email, name, role FROM users WHERE email = ? OR company_email = ?',
-      [emailLowerCase, emailLowerCase]
-    );
+    const users = await findUsersByEmail(db, emailLowerCase, {
+      columns: 'id, email, company_email, name, role',
+      includeCompanyEmail: true,
+    });
 
     // Check if user exists and provide helpful message
     if (users.length === 0) {
@@ -2108,6 +2106,11 @@ app.post('/api/auth/register', [
     if (existingUsers.length > 0) {
       return res.status(400).json({ error: 'User already exists' });
     }
+
+    // Same Gmail mailbox under a different dot/+tag spelling is the same person
+    if ((await findUsersByEmail(db, email, { columns: 'id, email' })).length > 0) {
+      return res.status(400).json({ error: 'An account already exists for this Gmail address (Gmail ignores dots). Please sign in instead.' });
+    }
     
     // Check if there's an active agreement - new users will need to sign after registration
     const [activeAgreement] = await db.execute(
@@ -2260,10 +2263,9 @@ app.post('/api/auth/login', async (req, res) => {
     if (email.includes('@')) {
       // It's an email address - try both personal email and company email
       console.log(`[LOGIN] Searching by email: ${email.toLowerCase()}`);
-      [users] = await db.execute(
-        'SELECT * FROM users WHERE email = ? OR company_email = ?',
-        [email.toLowerCase(), email.toLowerCase()]
-      );
+      // Gmail dots / +tags are ignored when the exact address misses
+      // (see server/lib/emailIdentity.js)
+      users = await findUsersByEmail(db, email, { includeCompanyEmail: true });
     } else {
       // It's a username - try intranet_username first
       console.log(`[LOGIN] Searching by intranet_username: ${email}`);
