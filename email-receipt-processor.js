@@ -19,6 +19,10 @@ const mysql = require('mysql2/promise');
 const Anthropic = require('@anthropic-ai/sdk');
 const pdfParse = require('pdf-parse');
 const nodemailer = require('nodemailer');
+const { getRateToBase } = require('./server/lib/exchangeRates');
+
+// Base/reporting currency (same env var as server.js; defaults to USD).
+const BASE_CURRENCY = (process.env.BASE_CURRENCY || 'USD').toUpperCase();
 
 // Configuration
 const COMPANY_NAME = process.env.COMPANY_NAME || 'Owtranet';
@@ -309,7 +313,7 @@ async function createLedgerEntry(userId, parsedData, emailSubject, emailBody, at
   const description = parsedData.description || '';
   const content = emailBody || `Receipt submitted via email to ${RECEIPT_MAILBOX}`;
   const amount = parsedData.amount || 0;
-  const currency = parsedData.currency || 'USD';
+  const currency = (parsedData.currency || BASE_CURRENCY).toUpperCase();
   const expenseDate = parsedData.date || new Date().toISOString().split('T')[0];
   const vendor = parsedData.merchant || null;
 
@@ -333,17 +337,11 @@ async function createLedgerEntry(userId, parsedData, emailSubject, emailBody, at
     }
   }
 
-  // Get exchange rate if not USD
+  // Get exchange rate into the instance's base currency
   let exchangeRate = 1.0;
-  if (currency !== 'USD') {
+  if (currency !== BASE_CURRENCY) {
     try {
-      const [rates] = await db.execute(
-        'SELECT rate FROM exchange_rates WHERE target_currency = ? AND date <= ? ORDER BY date DESC LIMIT 1',
-        [currency, expenseDate]
-      );
-      if (rates.length > 0) {
-        exchangeRate = rates[0].rate;
-      }
+      exchangeRate = (await getRateToBase(db, currency, expenseDate, BASE_CURRENCY)).rate;
     } catch (error) {
       console.error('Error fetching exchange rate:', error);
     }
@@ -393,7 +391,7 @@ async function createLedgerEntry(userId, parsedData, emailSubject, emailBody, at
       title,
       description,
       content,
-      usdAmount,                              // amount (in USD)
+      usdAmount,                              // amount (in BASE_CURRENCY)
       amount,                                 // original_amount
       currency,                               // original_currency
       exchangeRate,                           // exchange_rate
@@ -471,7 +469,7 @@ async function sendCategorizationRequest(fromEmail, originalSubject, parsedData,
     const transporter = createTransport();
 
     const amount = parsedData.amount || 'TBD';
-    const currency = parsedData.currency || 'USD';
+    const currency = parsedData.currency || BASE_CURRENCY;
     const title = parsedData.title || originalSubject || 'Unknown Receipt';
 
     const adminEmail = await getAdminEmail();
@@ -558,7 +556,7 @@ async function sendEmailReply(toEmail, originalSubject, parsedData, ledgerId, us
     const transporter = createTransport();
 
     const amount = parsedData.amount || 'TBD';
-    const currency = parsedData.currency || 'USD';
+    const currency = parsedData.currency || BASE_CURRENCY;
     const title = parsedData.title || originalSubject || 'Email Receipt Submission';
     // Deep-link straight to the new entry when we have its id; fall back to the
     // ledger list only if the id is somehow missing.

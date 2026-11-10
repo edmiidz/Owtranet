@@ -19,6 +19,7 @@ const { EmailManager, EmailCrypto } = require('./emailUtils');
 const { analyzeDocument } = require('./utils/aiAnalyzer');
 const fieldCrypto = require('./utils/fieldCrypto');
 const { createAgentResponder, extractMentionTokens } = require('./server/lib/aiAgents');
+const { getRateToBase } = require('./server/lib/exchangeRates'); // base-currency-aware rates
 const { findUsersByEmail } = require('./server/lib/emailIdentity'); // Gmail dot-insensitive sign-in lookup
 require('dotenv').config();
 
@@ -6052,7 +6053,7 @@ app.post('/api/deliverables/member-payment', authenticateToken, requireAdmin, as
       await db.execute(
         'INSERT INTO notifications (user_id, type, title, message) VALUES (?, ?, ?, ?)',
         [payer_id, 'investment_update', 'Investment Recorded',
-         `Your payment of ${actualCurrency} ${amount} to ${recipients[0].name} has been recorded as a $${usdAmount.toFixed(2)} USD investment.`]
+         `Your payment of ${actualCurrency} ${amount} to ${recipients[0].name} has been recorded as a $${usdAmount.toFixed(2)} ${BASE_CURRENCY} investment.`]
       );
     }
 
@@ -6251,54 +6252,11 @@ app.get('/api/exchange-rates', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Date and currency are required' });
     }
 
-    // Try to get exact date match first
-    const [exactMatch] = await db.execute(
-      `SELECT rate FROM exchange_rates
-       WHERE date = ? AND base_currency = 'USD' AND target_currency = ?`,
-      [date, currency]
-    );
-
-    if (exactMatch.length > 0) {
-      return res.json({ rate: parseFloat(exactMatch[0].rate), date, currency });
-    }
-
-    // If no exact match, get the most recent rate before or on that date
-    const [closestMatch] = await db.execute(
-      `SELECT rate, date FROM exchange_rates
-       WHERE date <= ? AND base_currency = 'USD' AND target_currency = ?
-       ORDER BY date DESC LIMIT 1`,
-      [date, currency]
-    );
-
-    if (closestMatch.length > 0) {
-      return res.json({
-        rate: parseFloat(closestMatch[0].rate),
-        date: closestMatch[0].date,
-        currency,
-        fallback: true
-      });
-    }
-
-    // If still no match, get the earliest available rate
-    const [earliestMatch] = await db.execute(
-      `SELECT rate, date FROM exchange_rates
-       WHERE base_currency = 'USD' AND target_currency = ?
-       ORDER BY date ASC LIMIT 1`,
-      [currency]
-    );
-
-    if (earliestMatch.length > 0) {
-      return res.json({
-        rate: parseFloat(earliestMatch[0].rate),
-        date: earliestMatch[0].date,
-        currency,
-        fallback: true,
-        earliest: true
-      });
-    }
-
-    // No rates available, return default
-    res.json({ rate: 1.0, date, currency, default: true });
+    // Multiplier from `currency` into BASE_CURRENCY (cross rate via the
+    // USD-anchored table, see server/lib/exchangeRates.js). Before this the
+    // endpoint returned USD-per-X even when the instance's base was not USD.
+    const result = await getRateToBase(db, currency, date, BASE_CURRENCY);
+    res.json({ ...result, currency });
   } catch (error) {
     console.error('Get exchange rate error:', error);
     res.status(500).json({ error: 'Failed to get exchange rate' });
@@ -8574,11 +8532,7 @@ app.post('/api/v1/ledger', authenticateApiToken, (req, res, next) => {
         exchangeRate = originalAmount !== 0 ? baseAmountInput / originalAmount : 1.0;
       } else {
         try {
-          const [rates] = await db.execute(
-            'SELECT rate FROM exchange_rates WHERE base_currency = ? AND target_currency = ? AND date <= ? ORDER BY date DESC LIMIT 1',
-            [BASE_CURRENCY, upperCurrency, expenseDate]
-          );
-          if (rates.length > 0) exchangeRate = parseFloat(rates[0].rate);
+          exchangeRate = (await getRateToBase(db, upperCurrency, expenseDate, BASE_CURRENCY)).rate;
         } catch (rateErr) {
           console.error('Ledger API: exchange rate lookup failed:', rateErr.message);
         }
