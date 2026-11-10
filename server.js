@@ -19,6 +19,7 @@ const { EmailManager, EmailCrypto } = require('./emailUtils');
 const { analyzeDocument } = require('./utils/aiAnalyzer');
 const fieldCrypto = require('./utils/fieldCrypto');
 const { createAgentResponder, extractMentionTokens } = require('./server/lib/aiAgents');
+const memberActivity = require('./server/lib/memberActivity'); // GET /api/v1/activity
 const { findUsersByEmail } = require('./server/lib/emailIdentity'); // Gmail dot-insensitive sign-in lookup
 require('dotenv').config();
 
@@ -9595,6 +9596,36 @@ app.post('/api/v1/group-chat/:group/messages', authenticateApiToken, [
     });
   } catch (error) {
     sendApiError(res, error, 'Failed to send group message');
+  }
+});
+
+// ===================== MEMBER ACTIVITY (read-only) =====================
+// What a set of members did in a time window: forum posts, comments, channel
+// messages, intranet tasks, and DM / email counts, e.g. for a stand-up brief.
+// Content comes back only for public posts and public channels; restricted
+// posts, private channels, DMs and emails are counts only (see
+// server/lib/memberActivity.js). Because it reports on other members, it is
+// limited to integration tokens flagged `admin` or `activity_read`; personal
+// tokens get 403.
+
+function tokenAllowsActivityRead(apiToken) {
+  const perms = parseTokenPermissions(apiToken);
+  return !!(perms && !Array.isArray(perms) && (perms.admin === true || perms.activity_read === true));
+}
+
+app.get('/api/v1/activity', authenticateApiToken, async (req, res) => {
+  if (!tokenAllowsActivityRead(req.apiToken)) {
+    return res.status(403).json({ error: 'This API token cannot read member activity' });
+  }
+  try {
+    const params = memberActivity.parseActivityQuery(req.query);
+    const data = await memberActivity.loadMemberActivity(db, { ...params, baseUrl: BASE_URL });
+    res.json({ success: true, data });
+  } catch (error) {
+    if (error instanceof memberActivity.ActivityQueryError) {
+      return res.status(error.status).json({ error: error.message });
+    }
+    sendApiError(res, error, 'Failed to load member activity');
   }
 });
 
