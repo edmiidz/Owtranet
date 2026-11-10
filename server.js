@@ -57,6 +57,10 @@ const BASE_URL = process.env.BASE_URL || 'https://intranet.example.com';
 const ADMIN_NOTIFY_EMAIL = process.env.ADMIN_NOTIFY_EMAIL || '';
 // Local Postfix/Dovecot: system sender account, and the suffix of per-member Linux mail users (<name>-<suffix>).
 const MAIL_SYSTEM_ADDRESS = process.env.MAIL_SYSTEM_ADDRESS || `system@${COMPANY_EMAIL_DOMAIN || 'example.com'}`;
+// Optional: send notification mail From a no-reply address (SMTP still logs in as
+// MAIL_SYSTEM_ADDRESS) and add a footer saying replies are not delivered. Pair it
+// with a mail-server rule that refuses mail to that address. Unset = unchanged.
+const MAIL_NOREPLY_ADDRESS = (process.env.MAIL_NOREPLY_ADDRESS || '').trim();
 const MAIL_USER_SUFFIX = process.env.MAIL_USER_SUFFIX || 'intranet';
 
 // Base/reporting currency for money views (ledger, investment tracker, dashboards).
@@ -272,6 +276,16 @@ const octokit = new Octokit({
 
 // Email sending function (updated to use local SMTP as primary)
 async function sendEmail(to, subject, text, html) {
+  if (MAIL_NOREPLY_ADDRESS) {
+    // Tell people not to hit Reply, since nobody reads the no-reply mailbox.
+    const noReplyText = `This is an automated message from ${MAIL_NOREPLY_ADDRESS}. Replies to this email are not delivered. Please reply on the intranet: ${process.env.BASE_URL || ''}`.trim();
+    if (text) text = `${text}\n\n--\n${noReplyText}`;
+    if (html) {
+      const noReplyHtml = `<p style="font-family: Arial, sans-serif; font-size: 12px; color: #6c757d; text-align: center; margin: 24px auto 0; max-width: 600px;">${noReplyText}</p>`;
+      html = /<\/body>/i.test(html) ? html.replace(/<\/body>/i, `${noReplyHtml}</body>`) : `${html}${noReplyHtml}`;
+    }
+  }
+
   console.log('=== SENDING EMAIL ===');
   console.log('To:', to);
   console.log('Subject:', subject);
@@ -308,7 +322,7 @@ async function sendEmail(to, subject, text, html) {
     });
 
     const mailOptions = {
-      from: `"${SITE_NAME}" <${MAIL_SYSTEM_ADDRESS}>`,
+      from: `"${SITE_NAME}" <${MAIL_NOREPLY_ADDRESS || MAIL_SYSTEM_ADDRESS}>`,
       to: to,
       subject: subject,
       text: text,
