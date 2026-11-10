@@ -140,6 +140,24 @@ module.exports = {
       error_file: './logs/scheduled-mail-err.log',
       out_file: './logs/scheduled-mail-out.log',
       time: true
+    },
+    {
+      // Authenticated sends from /var/log/mail.log -> smtp_sent_log, so member
+      // activity (GET /api/v1/activity) counts every email sent from a company
+      // mailbox. Needs server/migrations/add_smtp_sent_log.sql and read access
+      // to the mail log (root or the adm group). Idempotent: re-reads the
+      // retained log every hour. Only useful with the self-hosted mail stack.
+      name: 'owtranet-mail-log-ingest',
+      script: './server/cron/ingestMailLog.js',
+      args: '--apply',
+      cron_restart: '15 * * * *',
+      autorestart: false,
+      instances: 1,
+      exec_mode: 'fork',
+      max_memory_restart: '256M',
+      error_file: './logs/mail-log-ingest-err.log',
+      out_file: './logs/mail-log-ingest-out.log',
+      time: true
     }
   ]
 };
