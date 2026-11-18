@@ -1,22 +1,24 @@
 import React from 'react';
-import { Alert, View } from 'react-native';
+import { Alert, Platform, View } from 'react-native';
+import Constants from 'expo-constants';
 import { useRouter } from 'expo-router';
 import { useAuthStore } from '@/stores/auth';
 import { useBadges } from '@/stores/badges';
-import { useRadio } from '@/stores/radio';
-import { unregisterPush } from '@/lib/push';
+import { signOutActiveAccount } from '@/lib/accounts';
 import { openExternal } from '@/lib/files';
 import { Avatar, Badge, Button, Card, H2, P, Row, Screen, Small } from '@/components/ui';
 
 export default function MoreScreen() {
   const router = useRouter();
-  const { user, workspaceUrl, branding, aiAgent, logout } = useAuthStore();
+  const { user, workspaceUrl, branding, aiAgent, accounts } = useAuthStore();
   const b = useBadges();
 
   async function signOut() {
-    Alert.alert('Sign out', 'Sign out of this workspace on this device?', [
+    Alert.alert('Sign out', accounts.length > 1
+      ? 'Sign out of this account? Your other accounts stay signed in.'
+      : 'Sign out of this workspace on this device?', [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Sign out', style: 'destructive', onPress: async () => { useRadio.getState().stop(); await unregisterPush(); await logout(); router.replace('/login'); } },
+      { text: 'Sign out', style: 'destructive', onPress: () => { signOutActiveAccount(); } },
     ]);
   }
 
@@ -52,11 +54,14 @@ export default function MoreScreen() {
 
       <H2>Workspace</H2>
       <Card style={{ padding: 0, overflow: 'hidden' }}>
-        <Row icon="globe-outline" title={branding?.companyName || 'Intranet'} subtitle={workspaceUrl} onPress={() => openExternal(workspaceUrl)} chevron={false} />
+        <Row icon="globe-outline" title={branding?.companyName || 'Owtranet'} subtitle={workspaceUrl} onPress={() => openExternal(workspaceUrl)} chevron={false} />
+        <Row icon="swap-horizontal-outline" title={accounts.length > 1 ? 'Switch account' : 'Add account'}
+          subtitle={accounts.length > 1 ? `${accounts.length} accounts on this device · or long-press More` : 'Sign in to another workspace without signing out'}
+          onPress={() => router.push('/accounts')} />
         <Row icon="radio-outline" title="Radio settings" onPress={() => router.push('/radio-settings')} />
         <Row icon="log-out-outline" title="Sign out" onPress={signOut} chevron={false} />
       </Card>
-      <Small style={{ textAlign: 'center', marginTop: 10 }}>Intranet mobile · v1.0.0</Small>
+      <Small style={{ textAlign: 'center', marginTop: 10 }}>Owtranet · v{Constants.expoConfig?.version}{Constants.expoConfig?.ios?.buildNumber && Platform.OS === 'ios' ? ` (${Constants.expoConfig.ios.buildNumber})` : ''}</Small>
     </Screen>
   );
 }
