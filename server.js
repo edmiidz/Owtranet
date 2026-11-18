@@ -19,6 +19,7 @@ const { EmailManager, EmailCrypto } = require('./emailUtils');
 const { analyzeDocument } = require('./utils/aiAnalyzer');
 const fieldCrypto = require('./utils/fieldCrypto');
 const { createAgentResponder, extractMentionTokens } = require('./server/lib/aiAgents');
+const { findMissing: findMissingSchema, formatReport: formatSchemaReport } = require('./server/lib/schemaCheck');
 const { EMAIL_NOTIFICATION_MODES, awayMinutes: emailNotifyAwayMinutes, touchUserActivity, checkEmailNotification } = require('./server/lib/emailNotifications');
 const { findUsersByEmail } = require('./server/lib/emailIdentity'); // Gmail dot-insensitive sign-in lookup
 require('dotenv').config();
@@ -244,7 +245,17 @@ async function initDatabase() {
     
     // Test the connection
     await db.execute('SELECT 1 as test');
-    console.log('Database connected successfully');
+    console.log(`Database connected successfully (Owtranet ${require('./package.json').version})`);
+
+    // Warn (don't refuse to start) if migrations for this version haven't been
+    // applied: say exactly which file is missing instead of failing later with
+    // "Unknown column". deploy.sh runs the same check before restarting.
+    try {
+      const report = formatSchemaReport(await findMissingSchema(db), { applyHint: 'mysql <instance db> < FILE' });
+      if (report) console.error(`\n⚠️  SCHEMA OUT OF DATE\n${report}\nCheck again with: node scripts/check-schema.js\n`);
+    } catch (e) {
+      console.error('Schema check skipped:', e.message);
+    }
 
     // Fail loudly if any agreement collects payroll fields but no encryption key
     // is configured — refusing to start beats collecting SINs we can't encrypt.

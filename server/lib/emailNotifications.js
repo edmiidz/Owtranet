@@ -44,21 +44,45 @@ function touchUserActivity(db, userId) {
   });
 }
 
+let schemaWarningLogged = false;
+function warnSchemaOnce(err) {
+  if (schemaWarningLogged) return;
+  schemaWarningLogged = true;
+  console.error(`Email notification settings unavailable (${err.code}); emailing as before. ` +
+    'Apply server/migrations/add_email_notification_mode.sql (see `node scripts/check-schema.js`).');
+}
+
 /**
  * Load the recipient and decide. Comparisons run in SQL (NOW()) so the Node and
  * MySQL time zones can't disagree about "recent".
+ *
+ * Fails open: on a database where add_email_notification_mode.sql hasn't been
+ * applied yet, this behaves as before (email is sent) rather than silently
+ * dropping notifications.
  *
  * @returns {Promise<{user: object|null, send: boolean, reason: string}>}
  */
 async function checkEmailNotification(db, userId) {
   const mins = awayMinutes();
-  const [rows] = await db.execute(
-    `SELECT u.id, u.email, u.name, u.company_email, u.email_notification_preference,
-            u.email_notification_mode,
-            (u.last_active_at IS NOT NULL AND u.last_active_at >= NOW() - INTERVAL ${mins} MINUTE) AS recently_active
-       FROM users u WHERE u.id = ?`,
-    [userId]
-  );
+  let rows;
+  try {
+    [rows] = await db.execute(
+      `SELECT u.id, u.email, u.name, u.company_email, u.email_notification_preference,
+              u.email_notification_mode,
+              (u.last_active_at IS NOT NULL AND u.last_active_at >= NOW() - INTERVAL ${mins} MINUTE) AS recently_active
+         FROM users u WHERE u.id = ?`,
+      [userId]
+    );
+  } catch (err) {
+    if (err.code !== 'ER_BAD_FIELD_ERROR') throw err;
+    warnSchemaOnce(err);
+    [rows] = await db.execute(
+      'SELECT id, email, name, company_email, email_notification_preference FROM users WHERE id = ?',
+      [userId]
+    );
+    if (rows.length === 0) return { user: null, send: false, reason: 'no such user' };
+    return { user: rows[0], send: true, reason: 'notification settings not migrated yet' };
+  }
   if (rows.length === 0) return { user: null, send: false, reason: 'no such user' };
   const user = rows[0];
   const mode = EMAIL_NOTIFICATION_MODES.includes(user.email_notification_mode)
@@ -71,11 +95,16 @@ async function checkEmailNotification(db, userId) {
     return { user, send: false, reason: `active on web or mobile in the last ${mins} min` };
   }
   if (mode === 'when_signed_out') {
-    const [[d]] = await db.execute(
-      'SELECT COUNT(*) AS n FROM mobile_devices WHERE user_id = ? AND is_active = 1',
-      [userId]
-    );
-    if (Number(d.n) > 0) return { user, send: false, reason: 'signed in to the mobile app' };
+    try {
+      const [[d]] = await db.execute(
+        'SELECT COUNT(*) AS n FROM mobile_devices WHERE user_id = ? AND is_active = 1',
+        [userId]
+      );
+      if (Number(d.n) > 0) return { user, send: false, reason: 'signed in to the mobile app' };
+    } catch (err) {
+      // Instance without the mobile app tables: nobody can be signed in to it.
+      if (err.code !== 'ER_NO_SUCH_TABLE') throw err;
+    }
   }
   return { user, send: true, reason: 'away' };
 }

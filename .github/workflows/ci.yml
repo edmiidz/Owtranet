@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Syntax check
+        run: |
+          node --check server.js
+          node --check email-receipt-processor.js
+          node --check docker/init.js
+          bash -n deploy.sh scripts/smoke-test.sh test/db/upgrade-test.sh
+      - name: Unit tests
+        run: npm test
+
+  database:
+    # Fresh install AND upgrade from v1.0.0 against real MySQL: the two paths
+    # every instance takes. See test/db/upgrade-test.sh.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: ci-root
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -pci-root"
+          --health-interval=5s --health-timeout=5s --health-retries=30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # the upgrade test reads the v1.0.0 schema from history
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Install + upgrade test
+        env:
+          DB_HOST: 127.0.0.1
+          DB_USER: root
+          DB_PASSWORD: ci-root
+        run: test/db/upgrade-test.sh

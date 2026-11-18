@@ -9,9 +9,11 @@
  *      and loads the placeholder team agreement (db/seed_team_agreement.sql).
  *
  * An existing database is never modified beyond step 3. Schema upgrades still
- * go through server/migrations/ as described in the README.
+ * go through server/migrations/ as described in the README; on an existing
+ * database this prints which migration files are still missing.
  */
 const fs = require('fs');
+const { findMissing, formatReport } = require('../server/lib/schemaCheck');
 const path = require('path');
 const mysql = require('mysql2/promise');
 const bcrypt = require('bcryptjs');
@@ -49,6 +51,12 @@ async function connect() {
       console.log('[init] empty database: loading schema and seed data');
       await db.query(sql('schema.sql'));
       await db.query(sql('seed.sql'));
+    } else {
+      // Existing database: say which migrations an upgrade still needs.
+      const report = formatReport(await findMissing(db), {
+        applyHint: `docker compose exec -T db sh -c 'mysql -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" "$MYSQL_DATABASE"' < FILE`,
+      });
+      if (report) console.error(`[init] ⚠️  SCHEMA OUT OF DATE — run these from the repo directory on the host:\n${report}`);
     }
 
     const [[{ n: admins }]] = await db.query("SELECT COUNT(*) AS n FROM users WHERE role = 'admin'");

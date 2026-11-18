@@ -12,7 +12,11 @@ every Owtranet deployment land here first.
 - **Never commit secrets.** That includes `.env`, `.deploy.env`, keys, service
   account JSON and real API tokens.
 - **Schema changes** add an idempotent migration in `server/migrations/` and
-  update `db/schema.sql` in the same PR.
+  update `db/schema.sql` in the same PR. CI applies new migrations twice to an
+  older release's schema (`test/db/upgrade-test.sh`), so a migration that fails
+  on re-run, or a `schema.sql` change with no migration, fails the build.
+- **Note user-visible changes in `CHANGELOG.md`**, including any upgrade step
+  (migration, env var, `npm install`).
 - **Posts must use `server/lib/postVisibility.js`** for any new feature that
   lists posts, so the forum's permission rules apply everywhere.
 
@@ -22,6 +26,7 @@ every Owtranet deployment land here first.
 2. Check your changes:
    ```bash
    node --check server.js
+   npm test                        # unit tests
    cd client && npm run build      # TypeScript + Vite
    cd mobile && npx tsc --noEmit   # if you touched the app
    ```
