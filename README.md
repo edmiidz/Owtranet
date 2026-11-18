@@ -107,6 +107,12 @@ Open http://localhost:3006 and sign in as the admin. On first start the app
 container loads the schema, creates the admin and seeds a placeholder team
 agreement. Data lives in the `db-data` and `uploads` Docker volumes.
 
+If the first start fails, fix the cause and run `docker compose up -d` again
+with the same volumes. The initializer resumes first-run schema and seeding.
+Existing admins and agreements are preserved. If an older installation already
+has an admin and lacks an agreement, an admin can configure it in **Admin →
+Agreements**.
+
 - **Optional features**: add any setting from [`.env.example`](.env.example)
   (for example `ANTHROPIC_API_KEY` for AI agents, `SES_SMTP_*` for e-mail) to
   the same `.env` and run `docker compose up -d` again.
