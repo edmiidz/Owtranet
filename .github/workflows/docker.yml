@@ -19,8 +19,19 @@ jobs:
           sed -i "s/^ADMIN_EMAIL=.*/ADMIN_EMAIL=ci@example.com/" .env
           sed -i "s/^ADMIN_PASSWORD=.*/ADMIN_PASSWORD=ci-password-123/" .env
 
-      - name: Build and start
-        run: docker compose up -d --build
+      - name: Build and recover from an interrupted first setup
+        run: |
+          docker compose up -d --wait db
+          docker compose build app
+          if docker compose run --rm --no-deps -e ADMIN_PASSWORD=short app node docker/init.js > bootstrap.log 2>&1; then
+            echo "Expected bootstrap to fail validation"
+            exit 1
+          fi
+          if ! grep -q 'ADMIN_PASSWORD must be at least 8 characters' bootstrap.log; then
+            cat bootstrap.log
+            exit 1
+          fi
+          docker compose up -d
 
       - name: Wait for the app
         run: |
