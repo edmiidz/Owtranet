@@ -117,6 +117,10 @@ Fresh database: `db/schema.sql` → `db/seed.sql` → `node scripts/create-admin
   migration can't be re-run.
 - User-visible changes and upgrade steps go in `CHANGELOG.md`; bump
   `package.json` `version` when cutting a release.
+- Issues, milestones and releases follow CONTRIBUTING.md "Issues, milestones and
+  releases". In particular, write `Closes #N` in a PR only if it fully resolves the
+  issue (otherwise `Refs #N`), and give each issue the milestone of the version
+  it should ship in.
 - Dates: short `YYYY-MM-DD` (`toLocaleDateString('en-CA')`); long
   `YYYY-MM-DD HH:MM:SS TZ`.
 - When a page depends on a new read endpoint, add that endpoint to `scripts/smoke-test.sh`.
