@@ -180,9 +180,13 @@ servers run out of memory building Vite.
    ```bash
    ./deploy.sh
    ```
-   On the first deploy, run `npm install --omit=dev` in the app directory on the
-   server, then `sudo pm2 start ecosystem.config.js && sudo pm2 save`. Remove
-   workers you don't need from `ecosystem.config.js` first.
+   The first deploy creates the app directory's contents, installs server
+   dependencies (`npm ci --omit=dev` from `package-lock.json`), copies
+   `ecosystem.config.js` and starts the app in PM2. Later deploys reinstall
+   dependencies only when `package-lock.json` changes. To run the optional
+   workers (receipt e-mail, scheduled mail, push, …), edit `ecosystem.config.js`
+   on the server (it is never overwritten) and run
+   `sudo pm2 start ecosystem.config.js && sudo pm2 save`.
 4. **nginx + TLS**: copy `nginx.conf` to `/etc/nginx/sites-available/`, change
    `server_name`, enable it, and run `certbot --nginx -d intranet.example.com`.
 
