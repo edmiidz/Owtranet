@@ -437,6 +437,57 @@ if the group turns out to be private; `agents_summoned` reflects who was
 `intranet_post_channel_message` mirror the three endpoints above for the
 ElevenLabs voice agent — see `server/scripts/syncElevenLabsAgentTools.js`.
 
+## Member activity (read-only)
+
+What a set of members did in a time window, in one call. Built for stand-up /
+daily-brief integrations, so people who don't commit to GitHub still show up
+through their intranet work.
+
+```
+GET /api/v1/activity?since=2026-11-02T16:30:00Z&until=2026-11-03T16:30:00Z&member_ids=4,11,44
+```
+
+| Param | Required | Rules |
+|-------|----------|-------|
+| `since` | yes | ISO 8601 date-time |
+| `until` | no | ISO 8601 date-time, after `since`; default now; window at most 14 days |
+| `member_ids` | yes | comma-separated member ids, at most 20 |
+
+**Access:** integration tokens whose `permissions` has `admin: true` or
+`activity_read: true`. Personal tokens get `403`, because the endpoint reports on
+other members. Unknown ids and AI agent accounts are returned in `skipped`
+(`{id, reason}`), never in `members`.
+
+**What comes back per member** (`data.members[]`):
+
+| Field | Content |
+|-------|---------|
+| `member` | `id`, `name` |
+| `posts` | `public_count`, `private_count`, `public[]` (`id`, `title`, `excerpt`, `url`, `created_at`) |
+| `comments` | `public_count`, `private_count`, `public[]` (`post_id`, `post_title`, `excerpt`, `created_at`) |
+| `channel_messages` | `public_count`, `private_count`, `public[]` (`channel`, `excerpt`, `created_at`) |
+| `tasks` | `created[]` (`id`, `title`, `status`), `completed[]` (`id`, `title`) |
+| `direct_messages` | `sent`, `recipients` (counts only) |
+| `emails` | `sent` (count only), `mailboxes` (the member's company mailboxes counted) |
+
+Privacy is enforced by the endpoint, not the caller:
+
+- **Public** = posts with visibility `all_members`, comments on them, and
+  messages in public channels. These carry a 300-character excerpt.
+- **Restricted** posts, comments on them, and private-channel messages are
+  **counts only**.
+- **Direct messages and emails are counts only**: no content, subjects or
+  recipients.
+
+Notes: lists are capped at 50 per member (the `*_count` fields are exact).
+Intranet tasks have no `completed_at`, so `completed` means status `completed`
+and last updated in the window. Emails are every authenticated send through the
+mail server (webmail, phones, desktop clients) from mailboxes in
+`server_email_accounts` linked to the member, read from `smtp_sent_log`, which
+`server/cron/ingestMailLog.js` fills hourly from the Postfix log (apply
+`server/migrations/add_smtp_sent_log.sql` first). Without that table, only
+webmail and scheduled sends (`sent_emails`) are counted.
+
 ## Out of scope
 
 Attachment content, Delete via webhook, marking messages read via webhook,

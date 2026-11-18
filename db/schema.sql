@@ -1073,6 +1073,19 @@ CREATE TABLE `sent_emails` (
   KEY `idx_sent_at` (`sent_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
+
+-- Authenticated sends parsed from the Postfix mail log (server/cron/ingestMailLog.js)
+CREATE TABLE IF NOT EXISTS `smtp_sent_log` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `queue_id` varchar(32) NOT NULL,
+  `sender` varchar(255) NOT NULL,
+  `sent_at` datetime NOT NULL,
+  `recipient_count` int NOT NULL DEFAULT '0',
+  `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uniq_smtp_sent_queue` (`queue_id`, `sent_at`),
+  KEY `idx_smtp_sent_sender_time` (`sender`, `sent_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `server_email_accounts` (
