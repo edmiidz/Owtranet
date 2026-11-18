@@ -224,6 +224,9 @@ for the full list. The main groups are:
 
 These steps work from any earlier version, including instances that skipped
 releases. [CHANGELOG.md](CHANGELOG.md) says what each release changes.
+Using Claude Code? Paste the prompt in
+[docs/UPGRADING_WITH_CLAUDE.md](docs/UPGRADING_WITH_CLAUDE.md) into a session in
+your deployment repo. It works out your setup and follows these steps.
 
 1. **Get the code**: `git pull` (or merge `upstream/main` into your fork).
 2. **Find the migrations your database needs.** In the app directory on the
