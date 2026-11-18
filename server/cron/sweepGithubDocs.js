@@ -410,5 +410,5 @@ async function main() {
 if (require.main === module) {
   main();
 } else {
-  module.exports = { parseFrontmatter, toPlainText, extractTitle, extractSummary, slugOf, githubUrl, SOURCES };
+  module.exports = { parseFrontmatter, toPlainText, extractTitle, extractSummary, slugOf, githubUrl, loadSources };
 }
