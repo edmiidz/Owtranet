@@ -34,7 +34,7 @@ src/lib/                 push registration, formatting, file helpers
 - `expo.ios.associatedDomains` and the Android `intentFilters` host (default
   `intranet.example.com`) — must match the server's `IOS_APP_ID` / `ANDROID_PACKAGE`
   env so the universal-link files it serves line up
-- `expo.extra.defaultWorkspaceUrl`, and `expo.extra.eas.projectId` if you build with EAS
+- `expo.extra.defaultWorkspaceUrl` (optional — leave empty and the app asks for the community address on first launch), and `expo.extra.eas.projectId` if you build with EAS
 - `teamID` in `ExportOptions.plist` (only used for local `xcodebuild -exportArchive`)
 
 **Android push (FCM):** add your own Firebase project's `google-services.json` to

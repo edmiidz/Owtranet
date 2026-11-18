@@ -5,15 +5,19 @@ import { Ionicons } from '@expo/vector-icons';
 import { authApi, mobileApi } from '@/api';
 import { errorMessage } from '@/api/client';
 import { DEFAULT_WORKSPACE_URL, useAuthStore } from '@/stores/auth';
+import { cancelAddAccount } from '@/lib/accounts';
 import { Button, Card, H1, Input, P, Screen, Small } from '@/components/ui';
 import { useTheme } from '@/theme';
 
 export default function LoginScreen() {
   const t = useTheme();
   const router = useRouter();
-  const { workspaceUrl, setWorkspaceUrl, branding, setBranding, setAiAgent, login } = useAuthStore();
+  const { workspaceUrl, setWorkspaceUrl, branding, setBranding, setAiAgent, login, accounts } = useAuthStore();
+  // "Add account" from the switcher: another account is parked, so offer a way back to it.
+  const adding = accounts.length > 0;
   const [url, setUrl] = useState(workspaceUrl || DEFAULT_WORKSPACE_URL);
-  const [showWorkspace, setShowWorkspace] = useState(false);
+  // First launch (no community chosen yet) and "Add account" both start by asking for the address.
+  const [showWorkspace, setShowWorkspace] = useState(adding || !workspaceUrl);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [otpMode, setOtpMode] = useState(false);
@@ -24,6 +28,7 @@ export default function LoginScreen() {
 
   async function applyWorkspace(): Promise<boolean> {
     let clean = url.trim().replace(/\/+$/, '');
+    if (!clean) { Alert.alert('Enter your community address', 'Ask your administrator — it looks like intranet.yourcompany.com'); return false; }
     if (!/^https?:\/\//i.test(clean)) clean = `https://${clean}`;
     try {
       const cfg = await mobileApi.config(clean);
@@ -83,13 +88,13 @@ export default function LoginScreen() {
         <View style={{ width: 72, height: 72, borderRadius: 20, backgroundColor: t.primary, alignItems: 'center', justifyContent: 'center', marginBottom: 12 }}>
           <Ionicons name="business" size={36} color="#fff" />
         </View>
-        <H1 style={{ marginBottom: 2 }}>{branding?.companyShortName || 'Intranet'}</H1>
-        <Small>{url.replace(/^https?:\/\//, '')}</Small>
+        <H1 style={{ marginBottom: 2 }}>{adding ? 'Add account' : (workspaceUrl && branding?.companyShortName) || 'Owtranet'}</H1>
+        <Small>{url ? url.replace(/^https?:\/\//, '') : 'Sign in to your community'}</Small>
       </View>
 
       <Card>
         {showWorkspace ? (
-          <Input label="Workspace URL" value={url} onChangeText={setUrl} autoCapitalize="none" autoCorrect={false} keyboardType="url" placeholder="https://intranet.example.com" />
+          <Input label="Community address" value={url} onChangeText={setUrl} autoCapitalize="none" autoCorrect={false} keyboardType="url" placeholder="intranet.yourcompany.com" />
         ) : null}
         {!otpMode ? (
           <>
@@ -107,7 +112,8 @@ export default function LoginScreen() {
           </>
         )}
       </Card>
-      <Button title={showWorkspace ? 'Hide workspace settings' : 'Change workspace'} variant="ghost" icon="globe-outline" onPress={() => setShowWorkspace(v => !v)} />
+      <Button title={showWorkspace ? 'Hide community address' : 'Change community'} variant="ghost" icon="globe-outline" onPress={() => setShowWorkspace(v => !v)} />
+      {adding ? <Button title="Cancel" variant="ghost" icon="arrow-back-outline" onPress={() => { cancelAddAccount(); }} disabled={busy} /> : null}
       <Text style={{ color: t.muted, textAlign: 'center', fontSize: 12, marginTop: 20 }}>Accounts are created by invitation on the web intranet.</Text>
     </Screen>
   );

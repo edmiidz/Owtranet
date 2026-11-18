@@ -20,6 +20,9 @@ const { analyzeDocument } = require('./utils/aiAnalyzer');
 const fieldCrypto = require('./utils/fieldCrypto');
 const { createAgentResponder, extractMentionTokens } = require('./server/lib/aiAgents');
 const memberActivity = require('./server/lib/memberActivity'); // GET /api/v1/activity
+const { getRateToBase } = require('./server/lib/exchangeRates'); // base-currency-aware rates
+const { findMissing: findMissingSchema, formatReport: formatSchemaReport } = require('./server/lib/schemaCheck');
+const { EMAIL_NOTIFICATION_MODES, awayMinutes: emailNotifyAwayMinutes, touchUserActivity, checkEmailNotification } = require('./server/lib/emailNotifications');
 const { findUsersByEmail } = require('./server/lib/emailIdentity'); // Gmail dot-insensitive sign-in lookup
 require('dotenv').config();
 
@@ -58,6 +61,10 @@ const BASE_URL = process.env.BASE_URL || 'https://intranet.example.com';
 const ADMIN_NOTIFY_EMAIL = process.env.ADMIN_NOTIFY_EMAIL || '';
 // Local Postfix/Dovecot: system sender account, and the suffix of per-member Linux mail users (<name>-<suffix>).
 const MAIL_SYSTEM_ADDRESS = process.env.MAIL_SYSTEM_ADDRESS || `system@${COMPANY_EMAIL_DOMAIN || 'example.com'}`;
+// Optional: send notification mail From a no-reply address (SMTP still logs in as
+// MAIL_SYSTEM_ADDRESS) and add a footer saying replies are not delivered. Pair it
+// with a mail-server rule that refuses mail to that address. Unset = unchanged.
+const MAIL_NOREPLY_ADDRESS = (process.env.MAIL_NOREPLY_ADDRESS || '').trim();
 const MAIL_USER_SUFFIX = process.env.MAIL_USER_SUFFIX || 'intranet';
 
 // Base/reporting currency for money views (ledger, investment tracker, dashboards).
@@ -234,6 +241,7 @@ async function initDatabase() {
   try {
     db = mysql.createPool({
       host: process.env.DB_HOST || '127.0.0.1',
+      port: Number(process.env.DB_PORT) || 3306,
       user: process.env.DB_USER || 'intranet_user',
       password: process.env.DB_PASSWORD,
       database: process.env.DB_NAME || 'owtranet',
@@ -244,7 +252,17 @@ async function initDatabase() {
     
     // Test the connection
     await db.execute('SELECT 1 as test');
-    console.log('Database connected successfully');
+    console.log(`Database connected successfully (Owtranet ${require('./package.json').version})`);
+
+    // Warn (don't refuse to start) if migrations for this version haven't been
+    // applied: say exactly which file is missing instead of failing later with
+    // "Unknown column". deploy.sh runs the same check before restarting.
+    try {
+      const report = formatSchemaReport(await findMissingSchema(db), { applyHint: 'mysql <instance db> < FILE' });
+      if (report) console.error(`\n⚠️  SCHEMA OUT OF DATE\n${report}\nCheck again with: node scripts/check-schema.js\n`);
+    } catch (e) {
+      console.error('Schema check skipped:', e.message);
+    }
 
     // Fail loudly if any agreement collects payroll fields but no encryption key
     // is configured — refusing to start beats collecting SINs we can't encrypt.
@@ -273,6 +291,16 @@ const octokit = new Octokit({
 
 // Email sending function (updated to use local SMTP as primary)
 async function sendEmail(to, subject, text, html) {
+  if (MAIL_NOREPLY_ADDRESS) {
+    // Tell people not to hit Reply, since nobody reads the no-reply mailbox.
+    const noReplyText = `This is an automated message from ${MAIL_NOREPLY_ADDRESS}. Replies to this email are not delivered. Please reply on the intranet: ${process.env.BASE_URL || ''}`.trim();
+    if (text) text = `${text}\n\n--\n${noReplyText}`;
+    if (html) {
+      const noReplyHtml = `<p style="font-family: Arial, sans-serif; font-size: 12px; color: #6c757d; text-align: center; margin: 24px auto 0; max-width: 600px;">${noReplyText}</p>`;
+      html = /<\/body>/i.test(html) ? html.replace(/<\/body>/i, `${noReplyHtml}</body>`) : `${html}${noReplyHtml}`;
+    }
+  }
+
   console.log('=== SENDING EMAIL ===');
   console.log('To:', to);
   console.log('Subject:', subject);
@@ -309,7 +337,7 @@ async function sendEmail(to, subject, text, html) {
     });
 
     const mailOptions = {
-      from: `"${SITE_NAME}" <${MAIL_SYSTEM_ADDRESS}>`,
+      from: `"${SITE_NAME}" <${MAIL_NOREPLY_ADDRESS || MAIL_SYSTEM_ADDRESS}>`,
       to: to,
       subject: subject,
       text: text,
@@ -383,6 +411,9 @@ function authenticateToken(req, res, next) {
       return res.status(403).json({ error: 'Invalid or expired token' });
     }
     req.user = user;
+    // Presence for email notifications: anyone making signed-in web/mobile
+    // requests is "here" and doesn't need those emails (throttled, fire-and-forget).
+    touchUserActivity(db, user.userId);
 
     // Check for pending_agreement role and enforce agreement requirement
     const allowedPaths = [
@@ -750,23 +781,14 @@ async function processMentions(content, entityType, entityId, userId, mentioning
         ]
       );
 
-      // Send email notification to mentioned user if they're offline
+      // Email the mentioned user too, unless their email_notification_mode says not to
       try {
-        const [mentionedUserData] = await db.execute(
-          'SELECT email, name, company_email, last_login, email_notification_preference FROM users WHERE id = ?',
-          [mentionedUserId]
-        );
-        
-        if (mentionedUserData.length > 0) {
-          const mentionedUser = mentionedUserData[0];
+        const { user: mentionedUser, send, reason } = await checkEmailNotification(db, mentionedUserId);
+
+        if (mentionedUser) {
           const emailToUse = getNotificationEmail(mentionedUser);
-          
-          // Check if user was online recently (within last 30 minutes)
-          const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
-          const lastLogin = mentionedUser.last_login ? new Date(mentionedUser.last_login) : new Date(0);
-          const isUserOffline = lastLogin < thirtyMinutesAgo;
-          
-          if (isUserOffline) {
+
+          if (send) {
             const contentUrl = entityType === 'post' 
               ? `${process.env.BASE_URL}/forum/post/${notificationData.postId || entityId}`
               : `${process.env.BASE_URL}/forum/post/${notificationData.postId}`;
@@ -804,9 +826,9 @@ ${SITE_TEAM}`;
             for (const email of emailsToSend) {
               await sendEmail(email, emailSubject, emailText, emailHtml);
             }
-            console.log(`Mention email notification sent to ${emailsToSend.join(', ')} for offline user ${mentionedUser.name}`);
+            console.log(`Mention email notification sent to ${emailsToSend.join(', ')} for user ${mentionedUser.name} (${reason})`);
           } else {
-            console.log(`User ${mentionedUser.name} is online, skipping email notification for mention`);
+            console.log(`Skipping mention email to ${mentionedUser.name}: ${reason}`);
           }
         }
       } catch (emailError) {
@@ -830,8 +852,10 @@ function generateSlug(title) {
 
 // ===================== EMAIL & CALENDAR PROVIDER =====================
 // Each member picks where their work mailbox + calendar live. Only 'self_hosted'
-// (a Postfix/Dovecot mailbox + Nextcloud calendar on this box) unlocks the
-// Email Request flow and Webmail; Microsoft 365 / Google Workspace are external.
+// (a Postfix/Dovecot mailbox + Nextcloud calendar on this box) has Webmail and
+// automatic mailbox provisioning; Microsoft 365 / Google Workspace are external.
+// Email Requests work for every provider: for an external one, approval records
+// users.company_email and the admin creates the mailbox in that provider's console.
 // users.email_provider NULL = instance default (DEFAULT_EMAIL_PROVIDER env).
 const EMAIL_PROVIDERS = ['self_hosted', 'microsoft_365', 'google_workspace'];
 const DEFAULT_EMAIL_PROVIDER = EMAIL_PROVIDERS.includes(process.env.DEFAULT_EMAIL_PROVIDER)
@@ -843,6 +867,20 @@ const EMAIL_PROVIDER_OPTIONS = [
   { value: 'google_workspace', label: 'Google Workspace (Gmail + Google Calendar)', webmail: false },
 ];
 const isSelfHostedProvider = (provider) => (provider || DEFAULT_EMAIL_PROVIDER) === 'self_hosted';
+// Where an admin creates the mailbox for an approved request on an external provider,
+// and where the member signs in afterwards.
+const EXTERNAL_MAILBOX_PROVIDERS = {
+  google_workspace: {
+    name: 'Google Workspace',
+    adminConsoleUrl: 'https://admin.google.com/ac/users',
+    signInUrl: 'https://mail.google.com'
+  },
+  microsoft_365: {
+    name: 'Microsoft 365',
+    adminConsoleUrl: 'https://admin.microsoft.com/#/users',
+    signInUrl: 'https://outlook.office.com'
+  }
+};
 
 app.get('/api/config/branding', (req, res) => {
   res.json({
@@ -853,6 +891,7 @@ app.get('/api/config/branding', (req, res) => {
     baseCurrency: BASE_CURRENCY,
     emailProviders: EMAIL_PROVIDER_OPTIONS,
     defaultEmailProvider: DEFAULT_EMAIL_PROVIDER,
+    emailNotifyAwayMinutes: emailNotifyAwayMinutes(),
   });
 });
 
@@ -2462,14 +2501,6 @@ app.post('/api/email-requests', authenticateToken, [
   try {
     let { requested_email, justification } = req.body;
 
-    // A company mailbox is only provisioned for members on the self-hosted provider
-    const [requesterRows] = await db.execute('SELECT email_provider FROM users WHERE id = ?', [req.user.userId]);
-    if (requesterRows.length > 0 && !isSelfHostedProvider(requesterRows[0].email_provider)) {
-      return res.status(400).json({
-        error: `Your email & calendar provider is set to an external service. Switch it to the self-hosted ${COMPANY_SHORT_NAME} Mail option on your profile to request a @${COMPANY_EMAIL_DOMAIN} mailbox.`
-      });
-    }
-
     // Normalize the email - trim, lowercase, and add company domain if not present
     requested_email = requested_email.trim().toLowerCase();
     if (!requested_email.includes('@')) {
@@ -2481,15 +2512,24 @@ app.post('/api/email-requests', authenticateToken, [
       'SELECT id FROM email_requests WHERE requested_email = ?',
       [requested_email]
     );
-    
+
     if (existing.length > 0) {
       return res.status(400).json({ error: 'Email address already requested' });
+    }
+
+    // ...or already belongs to a member (e.g. set by an admin before this request existed)
+    const [taken] = await db.execute(
+      'SELECT id FROM users WHERE company_email = ? OR email = ?',
+      [requested_email, requested_email]
+    );
+    if (taken.length > 0) {
+      return res.status(400).json({ error: 'Email address is already in use' });
     }
     
     // Create request
     const [result] = await db.execute(
       'INSERT INTO email_requests (user_id, requested_email, justification) VALUES (?, ?, ?)',
-      [req.user.userId, requested_email, justification]
+      [req.user.userId, requested_email, justification || '']
     );
     
     // Notify admins in database
@@ -2562,13 +2602,14 @@ app.get('/api/email-requests', authenticateToken, async (req, res) => {
   try {
     let query = `
       SELECT er.*, u.name as requester_name, u.email as requester_email,
+             COALESCE(u.email_provider, ?) as provider,
              a.name as approver_name
       FROM email_requests er
       JOIN users u ON er.user_id = u.id
       LEFT JOIN users a ON er.approved_by = a.id
     `;
-    
-    const params = [];
+
+    const params = [DEFAULT_EMAIL_PROVIDER];
     
     // If not admin, only show user's own requests
     if (req.user.role !== 'admin') {
@@ -2599,25 +2640,73 @@ app.put('/api/email-requests/:id', authenticateToken, requireAdmin, async (req, 
     
     // Get request details before updating
     const [requests] = await db.execute(`
-      SELECT er.*, u.name as requester_name, u.email as requester_email
+      SELECT er.*, u.name as requester_name, u.email as requester_email,
+             u.email_provider as requester_email_provider
       FROM email_requests er
       JOIN users u ON er.user_id = u.id
       WHERE er.id = ?
     `, [id]);
-    
+
     if (requests.length === 0) {
       return res.status(404).json({ error: 'Email request not found' });
     }
-    
+
     const request = requests[0];
-    
+    const provider = request.requester_email_provider || DEFAULT_EMAIL_PROVIDER;
+    const external = EXTERNAL_MAILBOX_PROVIDERS[provider];
+
+    if (status === 'approved' && external) {
+      const [taken] = await db.execute(
+        'SELECT id FROM users WHERE (company_email = ? OR email = ?) AND id <> ?',
+        [request.requested_email, request.requested_email, request.user_id]
+      );
+      if (taken.length > 0) {
+        return res.status(400).json({ error: `${request.requested_email} already belongs to another member` });
+      }
+    }
+
     await db.execute(
       `UPDATE email_requests 
        SET status = ?, approved_by = ?, approved_at = NOW(), rejection_reason = ?
        WHERE id = ?`,
       [status, req.user.userId, rejection_reason || null, id]
     );
-    
+
+    // External provider (Google Workspace / Microsoft 365): nothing to provision on
+    // this server. Record the address on the member, tell them what happens next, and
+    // hand the admin the provider's console link — they create the mailbox there.
+    if (status === 'approved' && external) {
+      const requestedEmail = request.requested_email;
+      await db.execute(
+        'UPDATE users SET company_email = ?, company_email_created_at = NOW() WHERE id = ?',
+        [requestedEmail, request.user_id]
+      );
+
+      const memberMessage = `# 📧 Your @${COMPANY_EMAIL_DOMAIN} address is approved
+
+Hi ${request.requester_name}! Your request for **${requestedEmail}** has been approved.
+
+${COMPANY_NAME} email runs on **${external.name}**, so the mailbox is created there by an admin rather than on this intranet. You'll receive your ${external.name} sign-in details at your personal address (**${request.requester_email}**). Once you have them, sign in at ${external.signInUrl}.
+
+Your intranet account now shows ${requestedEmail} as your work address.`;
+
+      try {
+        await deliverDirectMessage(1, request.user_id, memberMessage);
+      } catch (dmError) {
+        console.error('Failed to send email request approval DM:', dmError);
+      }
+
+      console.log(`Email request ${id} approved for ${requestedEmail} (${provider}) — mailbox to be created in ${external.name}`);
+      return res.json({
+        message: `Request approved. Create ${requestedEmail} in ${external.name}: ${external.adminConsoleUrl}`,
+        account_created: false,
+        external_provider: provider,
+        external_provider_name: external.name,
+        admin_console_url: external.adminConsoleUrl,
+        requested_email: requestedEmail
+      });
+    }
+
     // If approved, create the email account
     // ⚠️ IMPORTANT: Read docs/EMAIL_SYSTEM_ARCHITECTURE.md before modifying this section
     // Key rules: Use virtual mail users (no system users), email address format for paths,
@@ -4642,21 +4731,13 @@ async function createComment(postId, user, content, parentId = null, opts = {}) 
     );
 
     try {
-      const [authorData] = await db.execute(
-        'SELECT email, name, company_email, last_login, email_notification_preference FROM users WHERE id = ?',
-        [post.user_id]
-      );
+      // Email the author too, unless their email_notification_mode says not to
+      const { user: author, send, reason } = await checkEmailNotification(db, post.user_id);
 
-      if (authorData.length > 0) {
-        const author = authorData[0];
+      if (author) {
         const emailToUse = getNotificationEmail(author);
 
-        // Only email authors who have not been online in the last 30 minutes
-        const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
-        const lastLogin = author.last_login ? new Date(author.last_login) : new Date(0);
-        const isUserOffline = lastLogin < thirtyMinutesAgo;
-
-        if (isUserOffline) {
+        if (send) {
           const postUrl = `${process.env.BASE_URL}/forum/post/${postId}`;
 
           const emailSubject = `New Comment on Your Post - ${SITE_NAME}`;
@@ -4690,7 +4771,9 @@ ${SITE_TEAM}`;
           for (const email of emailsToSend) {
             await sendEmail(email, emailSubject, emailText, emailHtml);
           }
-          console.log(`Email notification sent to ${emailsToSend.join(', ')} for offline user ${author.name}`);
+          console.log(`Comment email notification sent to ${emailsToSend.join(', ')} for user ${author.name} (${reason})`);
+        } else {
+          console.log(`Skipping comment email to ${author.name}: ${reason}`);
         }
       }
     } catch (emailError) {
@@ -6053,7 +6136,7 @@ app.post('/api/deliverables/member-payment', authenticateToken, requireAdmin, as
       await db.execute(
         'INSERT INTO notifications (user_id, type, title, message) VALUES (?, ?, ?, ?)',
         [payer_id, 'investment_update', 'Investment Recorded',
-         `Your payment of ${actualCurrency} ${amount} to ${recipients[0].name} has been recorded as a $${usdAmount.toFixed(2)} USD investment.`]
+         `Your payment of ${actualCurrency} ${amount} to ${recipients[0].name} has been recorded as a $${usdAmount.toFixed(2)} ${BASE_CURRENCY} investment.`]
       );
     }
 
@@ -6252,54 +6335,11 @@ app.get('/api/exchange-rates', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Date and currency are required' });
     }
 
-    // Try to get exact date match first
-    const [exactMatch] = await db.execute(
-      `SELECT rate FROM exchange_rates
-       WHERE date = ? AND base_currency = 'USD' AND target_currency = ?`,
-      [date, currency]
-    );
-
-    if (exactMatch.length > 0) {
-      return res.json({ rate: parseFloat(exactMatch[0].rate), date, currency });
-    }
-
-    // If no exact match, get the most recent rate before or on that date
-    const [closestMatch] = await db.execute(
-      `SELECT rate, date FROM exchange_rates
-       WHERE date <= ? AND base_currency = 'USD' AND target_currency = ?
-       ORDER BY date DESC LIMIT 1`,
-      [date, currency]
-    );
-
-    if (closestMatch.length > 0) {
-      return res.json({
-        rate: parseFloat(closestMatch[0].rate),
-        date: closestMatch[0].date,
-        currency,
-        fallback: true
-      });
-    }
-
-    // If still no match, get the earliest available rate
-    const [earliestMatch] = await db.execute(
-      `SELECT rate, date FROM exchange_rates
-       WHERE base_currency = 'USD' AND target_currency = ?
-       ORDER BY date ASC LIMIT 1`,
-      [currency]
-    );
-
-    if (earliestMatch.length > 0) {
-      return res.json({
-        rate: parseFloat(earliestMatch[0].rate),
-        date: earliestMatch[0].date,
-        currency,
-        fallback: true,
-        earliest: true
-      });
-    }
-
-    // No rates available, return default
-    res.json({ rate: 1.0, date, currency, default: true });
+    // Multiplier from `currency` into BASE_CURRENCY (cross rate via the
+    // USD-anchored table, see server/lib/exchangeRates.js). Before this the
+    // endpoint returned USD-per-X even when the instance's base was not USD.
+    const result = await getRateToBase(db, currency, date, BASE_CURRENCY);
+    res.json({ ...result, currency });
   } catch (error) {
     console.error('Get exchange rate error:', error);
     res.status(500).json({ error: 'Failed to get exchange rate' });
@@ -6370,7 +6410,7 @@ app.get('/api/users/:username', async (req, res, next) => {
       [users] = await db.execute(
         `SELECT id, email, name, github_username, intranet_username, avatar_url, bio,
                 department, position, company, company_email, role, created_at, last_login, calendar_link,
-                email_notification_preference, agent_embed_code, email_provider, account_type
+                email_notification_preference, email_notification_mode, agent_embed_code, email_provider, account_type
          FROM users WHERE id = ?`,
         [userId]
       );
@@ -6379,7 +6419,7 @@ app.get('/api/users/:username', async (req, res, next) => {
       [users] = await db.execute(
         `SELECT id, email, name, github_username, intranet_username, avatar_url, bio,
                 department, position, company, company_email, role, created_at, last_login, calendar_link,
-                email_notification_preference, agent_embed_code, email_provider, account_type
+                email_notification_preference, email_notification_mode, agent_embed_code, email_provider, account_type
          FROM users WHERE intranet_username = ?`,
         [username]
       );
@@ -6389,7 +6429,7 @@ app.get('/api/users/:username', async (req, res, next) => {
         [users] = await db.execute(
           `SELECT u.id, u.email, u.name, u.github_username, u.intranet_username, u.avatar_url, u.bio,
                   u.department, u.position, u.company, u.company_email, u.role, u.created_at, u.last_login, u.calendar_link,
-                  u.email_notification_preference, u.agent_embed_code, u.email_provider, u.account_type
+                  u.email_notification_preference, u.email_notification_mode, u.agent_embed_code, u.email_provider, u.account_type
            FROM ai_agents a JOIN users u ON u.id = a.user_id WHERE a.handle = ?`,
           [username]
         );
@@ -6461,7 +6501,7 @@ app.put('/api/users/:userId', authenticateToken, async (req, res) => {
       return res.status(403).json({ error: 'Unauthorized' });
     }
     
-    const { email, other_emails, bio, department, position, company, intranet_username, github_username, calendar_link, email_notification_preference, agent_embed_code, email_provider } = req.body;
+    const { email, other_emails, bio, department, position, company, intranet_username, github_username, calendar_link, email_notification_preference, email_notification_mode, agent_embed_code, email_provider } = req.body;
 
     // Email & calendar provider: only update when the client sent one (older clients /
     // the mobile app omit it). COALESCE below keeps the stored value on null.
@@ -6469,6 +6509,13 @@ app.put('/api/users/:userId', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: `Invalid email provider. Choose one of: ${EMAIL_PROVIDERS.join(', ')}` });
     }
     const emailProviderValue = email_provider || null;
+
+    // When notification emails go out. Same rule as email_provider: the mobile app
+    // doesn't send it, so null keeps the stored value.
+    if (email_notification_mode && !EMAIL_NOTIFICATION_MODES.includes(email_notification_mode)) {
+      return res.status(400).json({ error: `Invalid email notification mode. Choose one of: ${EMAIL_NOTIFICATION_MODES.join(', ')}` });
+    }
+    const emailNotificationModeValue = email_notification_mode || null;
     
     // Check if email is unique and not a company email (if provided)
     if (email && email.trim()) {
@@ -6512,13 +6559,13 @@ app.put('/api/users/:userId', authenticateToken, async (req, res) => {
     // Update user profile (only update email if provided)
     if (email && email.trim()) {
       await db.execute(
-        'UPDATE users SET email = ?, other_emails = ?, bio = ?, department = ?, position = ?, company = ?, intranet_username = ?, github_username = ?, calendar_link = ?, email_notification_preference = ?, agent_embed_code = ?, email_provider = COALESCE(?, email_provider) WHERE id = ?',
-        [email.trim().toLowerCase(), other_emails?.trim() || null, bio, department, position, company, intranet_username?.trim() || null, github_username?.trim() || null, calendar_link?.trim() || null, email_notification_preference || 'company', agent_embed_code?.trim() || null, emailProviderValue, userId]
+        'UPDATE users SET email = ?, other_emails = ?, bio = ?, department = ?, position = ?, company = ?, intranet_username = ?, github_username = ?, calendar_link = ?, email_notification_preference = ?, email_notification_mode = COALESCE(?, email_notification_mode), agent_embed_code = ?, email_provider = COALESCE(?, email_provider) WHERE id = ?',
+        [email.trim().toLowerCase(), other_emails?.trim() || null, bio, department, position, company, intranet_username?.trim() || null, github_username?.trim() || null, calendar_link?.trim() || null, email_notification_preference || 'company', emailNotificationModeValue, agent_embed_code?.trim() || null, emailProviderValue, userId]
       );
     } else {
       await db.execute(
-        'UPDATE users SET other_emails = ?, bio = ?, department = ?, position = ?, company = ?, intranet_username = ?, github_username = ?, calendar_link = ?, email_notification_preference = ?, agent_embed_code = ?, email_provider = COALESCE(?, email_provider) WHERE id = ?',
-        [other_emails?.trim() || null, bio, department, position, company, intranet_username?.trim() || null, github_username?.trim() || null, calendar_link?.trim() || null, email_notification_preference || 'company', agent_embed_code?.trim() || null, emailProviderValue, userId]
+        'UPDATE users SET other_emails = ?, bio = ?, department = ?, position = ?, company = ?, intranet_username = ?, github_username = ?, calendar_link = ?, email_notification_preference = ?, email_notification_mode = COALESCE(?, email_notification_mode), agent_embed_code = ?, email_provider = COALESCE(?, email_provider) WHERE id = ?',
+        [other_emails?.trim() || null, bio, department, position, company, intranet_username?.trim() || null, github_username?.trim() || null, calendar_link?.trim() || null, email_notification_preference || 'company', emailNotificationModeValue, agent_embed_code?.trim() || null, emailProviderValue, userId]
       );
     }
     
@@ -7886,23 +7933,14 @@ async function deliverDirectMessage(senderId, recipientId, content, replyToId = 
     })
   ]);
   
-  // Send email notification to recipient if they're offline
+  // Email the recipient too, unless their email_notification_mode says not to
   try {
-    const [recipientData] = await db.execute(
-      'SELECT email, name, company_email, last_login, email_notification_preference FROM users WHERE id = ?',
-      [recipientId]
-    );
-    
-    if (recipientData.length > 0) {
-      const recipientUser = recipientData[0];
+    const { user: recipientUser, send, reason } = await checkEmailNotification(db, recipientId);
+
+    if (recipientUser) {
       const emailToUse = getNotificationEmail(recipientUser);
-      
-      // Check if user was online recently (within last 30 minutes)
-      const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
-      const lastLogin = recipientUser.last_login ? new Date(recipientUser.last_login) : new Date(0);
-      const isUserOffline = lastLogin < thirtyMinutesAgo;
-      
-      if (isUserOffline) {
+
+      if (send) {
         const messageUrl = `${process.env.BASE_URL}/messages?user=${senderUsername}`;
         
         const emailSubject = `💬 New Message from ${senderName} - ${SITE_NAME}`;
@@ -7915,7 +7953,7 @@ Message Preview:
 
 Read and reply at: ${messageUrl}
 
-You're receiving this email because you haven't been active on the intranet recently. Log in to stop receiving email notifications for messages.
+You're receiving this email because of your Email Notifications setting (by default, only while you're away from the intranet). You can change it on your profile.
 
 Best regards,
 ${SITE_TEAM}`;
@@ -7943,7 +7981,7 @@ ${SITE_TEAM}`;
           
           <div style="background: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; border-radius: 8px; margin-bottom: 25px;">
             <p style="margin: 0; font-size: 14px; color: #856404;">
-              📧 <strong>Email Notifications:</strong> You're receiving this email because you haven't been active on the intranet recently. Log in to stop receiving email notifications for messages.
+              📧 <strong>Email Notifications:</strong> You're receiving this email because of your Email Notifications setting (by default, only while you're away from the intranet). You can change it on your profile.
             </p>
           </div>
           
@@ -7957,9 +7995,9 @@ ${SITE_TEAM}`;
         for (const email of emailsToSend) {
           await sendEmail(email, emailSubject, emailText, emailHtml);
         }
-        console.log(`Direct message email notification sent to ${emailsToSend.join(', ')} for offline user ${recipientUser.name}`);
+        console.log(`Direct message email notification sent to ${emailsToSend.join(', ')} for user ${recipientUser.name} (${reason})`);
       } else {
-        console.log(`User ${recipientUser.name} is online, skipping email notification for direct message`);
+        console.log(`Skipping direct message email to ${recipientUser.name}: ${reason}`);
       }
     }
   } catch (emailError) {
@@ -8575,11 +8613,7 @@ app.post('/api/v1/ledger', authenticateApiToken, (req, res, next) => {
         exchangeRate = originalAmount !== 0 ? baseAmountInput / originalAmount : 1.0;
       } else {
         try {
-          const [rates] = await db.execute(
-            'SELECT rate FROM exchange_rates WHERE base_currency = ? AND target_currency = ? AND date <= ? ORDER BY date DESC LIMIT 1',
-            [BASE_CURRENCY, upperCurrency, expenseDate]
-          );
-          if (rates.length > 0) exchangeRate = parseFloat(rates[0].rate);
+          exchangeRate = (await getRateToBase(db, upperCurrency, expenseDate, BASE_CURRENCY)).rate;
         } catch (rateErr) {
           console.error('Ledger API: exchange rate lookup failed:', rateErr.message);
         }
@@ -11065,7 +11099,7 @@ app.post('/api/webmail/draft', authenticateToken, [
 // ── Scheduled sends ────────────────────────────────────────────
 // Rows live in scheduled_emails; server/cron/scheduledEmailSender.js sends them.
 
-// List the caller's scheduled / in-flight / failed sends (+ sends from the last 7 days)
+// List the caller's scheduled, in-flight or unresolved sends and recent successes.
 app.get('/api/webmail/scheduled', authenticateToken, async (req, res) => {
   try {
     const emails = await scheduledEmails.listForUser(db, req.user.userId);
@@ -11118,8 +11152,11 @@ app.post('/api/webmail/scheduled/:id/send-now', authenticateToken, async (req, r
     const mine = await scheduledEmails.getForUser(db, id, req.user.userId);
     if (!mine) return res.status(404).json({ error: 'Scheduled email not found' });
     const claimed = await scheduledEmails.claim(db, id, ['scheduled', 'failed']);
-    if (!claimed) return res.status(409).json({ error: 'This email is no longer scheduled (already sent, sending, or cancelled)' });
+    if (!claimed) return res.status(409).json({ error: 'This email cannot be sent in its current state' });
     const result = await scheduledEmails.sendClaimed(db, emailManager, id);
+    if (result.outcome === 'delivery_unknown') {
+      return res.status(409).json({ error: 'Delivery could not be confirmed', details: result.error, outcome: result.outcome });
+    }
     if (result.outcome !== 'sent') {
       return res.status(500).json({ error: 'Failed to send email', details: result.error, outcome: result.outcome });
     }

@@ -32,6 +32,8 @@ export interface User {
   company_email_created_at?: string;
   company_email_last_reset?: string;
   email_notification_preference?: 'personal' | 'company' | 'both';
+  /** When mention/comment/DM emails go out (server/lib/emailNotifications.js) */
+  email_notification_mode?: 'always' | 'when_away' | 'when_signed_out' | 'never';
   /** Mail + calendar provider; null/undefined = instance default (branding.defaultEmailProvider) */
   email_provider?: EmailProvider | null;
   agent_embed_code?: string;
@@ -180,7 +182,19 @@ export interface EmailRequest {
   created_at: string;
   requester_name?: string;
   requester_email?: string;
+  /** Requester's effective mail provider (their choice or the instance default). */
+  provider?: EmailProvider;
   approver_name?: string;
+}
+
+/** PUT /api/email-requests/:id response. External providers return the console to create the mailbox in. */
+export interface EmailRequestUpdateResult {
+  message: string;
+  account_created: boolean;
+  external_provider?: EmailProvider;
+  external_provider_name?: string;
+  admin_console_url?: string;
+  requested_email?: string;
 }
 
 export interface Notification {

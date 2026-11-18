@@ -114,9 +114,9 @@ export function StatusPill({ status }: { status?: string | null }) {
   return <View style={{ borderColor: color, borderWidth: 1, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2, alignSelf: 'flex-start' }}><Text style={{ color, fontSize: 11.5, fontWeight: '700', textTransform: 'capitalize' }}>{(status || '').replace(/_/g, ' ')}</Text></View>;
 }
 
-export function Avatar({ uri, name, size = 36 }: { uri?: string | null; name?: string | null; size?: number }) {
+export function Avatar({ uri, name, size = 36, workspaceUrl }: { uri?: string | null; name?: string | null; size?: number; workspaceUrl?: string }) {
   const t = useTheme();
-  const src = absoluteUrl(uri);
+  const src = absoluteUrl(uri, workspaceUrl);
   if (src) return <Image source={{ uri: src }} style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: t.chip }} />;
   return <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: t.chip, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: t.chipText, fontWeight: '700', fontSize: size * 0.38 }}>{initials(name)}</Text></View>;
 }

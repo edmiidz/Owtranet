@@ -144,7 +144,7 @@
       "@config-plugins/react-native-webrtc"
     ],
     "extra": {
-      "defaultWorkspaceUrl": "https://intranet.example.com",
+      "defaultWorkspaceUrl": "",
       "eas": {
         "projectId": ""
       }
