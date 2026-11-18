@@ -163,6 +163,20 @@ Suggested location: `/etc/dovecot/dovecot-sql-intranet.conf.ext`
 `MAIL_SMTP_PASSWORD`. The per-user encrypted password stored in
 `server_email_accounts` is not yet used for IMAP.
 
+## Scheduled mail with unconfirmed delivery
+
+The Scheduled tab marks a message **Delivery unconfirmed** when Owtranet loses
+confirmation of an attempted SMTP submission. Check the Sent folder, ask an
+administrator to inspect the mail-server logs, or ask the recipient to confirm
+delivery before composing a new copy. The queue keeps these rows visible for
+follow-up and excludes them from automatic retries and **Send now**.
+
+When upgrading, stop the old app and scheduler, apply
+`server/migrations/add_scheduled_email_delivery_unknown.sql`, then start the
+updated app and scheduler. The migration flags older in-flight and attempted
+queued or failed messages for verification. The old queue did not record enough
+information to determine whether those attempts reached SMTP.
+
 ## Verification Commands
 
 ```bash

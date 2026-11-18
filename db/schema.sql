@@ -989,7 +989,7 @@ CREATE TABLE `scheduled_emails` (
   `html_body` mediumtext,
   `attachments` json DEFAULT NULL COMMENT '[{filename, path, contentType, size}] as saved by multer',
   `scheduled_at` datetime NOT NULL COMMENT 'UTC',
-  `status` enum('scheduled','sending','sent','failed','cancelled') NOT NULL DEFAULT 'scheduled',
+  `status` enum('scheduled','sending','sent','failed','cancelled','delivery_unknown') NOT NULL DEFAULT 'scheduled',
   `attempts` tinyint unsigned NOT NULL DEFAULT '0',
   `last_error` text,
   `message_id` varchar(255) DEFAULT NULL,
