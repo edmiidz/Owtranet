@@ -1300,6 +1300,7 @@ CREATE TABLE `users` (
   `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `company_email` varchar(255) DEFAULT NULL,
   `email_notification_preference` enum('personal','company','both') DEFAULT 'company',
+  `email_notification_mode` enum('always','when_away','when_signed_out','never') NOT NULL DEFAULT 'when_away' COMMENT 'When to email mention/comment/DM notifications; see server/lib/emailNotifications.js',
   `email_provider` enum('self_hosted','microsoft_365','google_workspace') DEFAULT NULL COMMENT 'Mail + calendar provider; NULL = instance default (DEFAULT_EMAIL_PROVIDER)',
   `company_email_created_at` datetime DEFAULT NULL,
   `company_email_last_reset` datetime DEFAULT NULL,

@@ -15,6 +15,8 @@ interface BrandingState {
   baseCurrency: string;
   emailProviders: EmailProviderOption[];
   defaultEmailProvider: EmailProvider;
+  /** Minutes without web/mobile activity before notification emails resume (EMAIL_NOTIFY_AWAY_MINUTES) */
+  emailNotifyAwayMinutes: number;
   loaded: boolean;
   fetchBranding: () => Promise<void>;
 }
@@ -27,6 +29,7 @@ export const useBrandingStore = create<BrandingState>((set, get) => ({
   baseCurrency: 'USD',
   emailProviders: DEFAULT_EMAIL_PROVIDERS,
   defaultEmailProvider: 'self_hosted',
+  emailNotifyAwayMinutes: 30,
   loaded: false,
 
   fetchBranding: async () => {
@@ -43,6 +46,7 @@ export const useBrandingStore = create<BrandingState>((set, get) => ({
           baseCurrency: (data.baseCurrency || 'USD').toUpperCase(),
           emailProviders: Array.isArray(data.emailProviders) && data.emailProviders.length > 0 ? data.emailProviders : DEFAULT_EMAIL_PROVIDERS,
           defaultEmailProvider: data.defaultEmailProvider || 'self_hosted',
+          emailNotifyAwayMinutes: Number(data.emailNotifyAwayMinutes) > 0 ? Number(data.emailNotifyAwayMinutes) : 30,
           loaded: true,
         });
       }
