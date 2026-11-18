@@ -55,13 +55,25 @@ ssh -i "$SSH_KEY" -o ConnectTimeout=20 "$SSH_USER@$SERVER" \
   "APP=$(printf '%q' "$APP") PORT=$(printf '%q' "$PORT") ENDPOINT_LIST=$(printf '%q' "$ENDPOINT_LIST") bash -s" <<'REMOTE'
 set -uo pipefail
 cd "$APP" || { echo "❌ app dir $APP missing"; exit 1; }
-set -a; source .env; set +a
+# Read only the keys this test needs. `source .env` would run every line as shell,
+# and .env is dotenv syntax: an unquoted value with a space (COMPANY_NAME=Example Co)
+# runs "Co" as a command.
+env_get() {
+  local v
+  v=$(grep -E "^[[:space:]]*$1[[:space:]]*=" .env | tail -1 | cut -d= -f2- | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')
+  case "$v" in \"*\") v="${v#\"}"; v="${v%\"}" ;; \'*\') v="${v#\'}"; v="${v%\'}" ;; esac
+  printf '%s' "$v"
+}
+DB_HOST=$(env_get DB_HOST); DB_PORT=$(env_get DB_PORT); DB_USER=$(env_get DB_USER)
+DB_PASSWORD=$(env_get DB_PASSWORD); DB_NAME=$(env_get DB_NAME)
+JWT_SECRET=$(env_get JWT_SECRET); export JWT_SECRET
+DB_HOST="${DB_HOST:-127.0.0.1}"; DB_PORT="${DB_PORT:-3306}"
 
 # Admin identity: lowest-id admin that can actually log in.
-ADMIN_ID=$(mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" -N -e \
+ADMIN_ID=$(mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" -N -e \
   "SELECT id FROM users WHERE role='admin' AND password_hash IS NOT NULL ORDER BY id LIMIT 1" 2>/dev/null)
 if [ -z "$ADMIN_ID" ]; then
-  ADMIN_ID=$(mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" -N -e \
+  ADMIN_ID=$(mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" -N -e \
     "SELECT id FROM users WHERE role='admin' ORDER BY id LIMIT 1" 2>/dev/null)
 fi
 if [ -z "$ADMIN_ID" ]; then echo "❌ no admin user found in $DB_NAME"; exit 1; fi
