@@ -5,6 +5,36 @@ upgrade needs. To upgrade any instance from any earlier version, follow
 [Upgrading an existing instance](README.md#upgrading-an-existing-instance):
 `node scripts/check-schema.js` names every migration your database still needs.
 
+## 1.1.1 — 2026-11-18
+
+### Upgrade steps (from 1.1.0)
+
+No migrations and no new settings. Deploy as usual. The first `./deploy.sh` with
+this version records your server's dependency state without reinstalling. From
+then on it runs `npm ci --omit=dev` itself whenever `package-lock.json` changes,
+so you no longer need to run `npm install` on the server by hand. Coming from
+1.0.x, follow the 1.1.0 steps first.
+
+### Fixes
+
+- **Self-hosted Email Request approval always failed** (#3, #24). Approving a
+  request hit an undefined variable partway through creating the mailbox, so it
+  reported "account creation failed" and could leave a half-created mailbox. The
+  setup email also showed the wrong IMAP username; it is now the full address.
+  If an earlier approval failed this way, re-approve the request after
+  upgrading.
+- **First deploy to an empty server** (#1, #25). `deploy.sh` now:
+  - creates the app directories;
+  - copies `ecosystem.config.js` once (never overwriting yours);
+  - installs server dependencies from the shipped `package-lock.json`;
+  - starts the app in PM2 if it isn't running yet.
+- **Invites report the real email result** (#25). When the invitation email
+  can't be sent, Admin → Invites says so and shows the link to share, instead
+  of claiming it was emailed.
+- **`npm run setup` no longer rewrites `package-lock.json`** (it uses `npm ci`).
+- The GitHub docs sweeper no longer exports a constant that was removed.
+- CI now fails on undefined variables in server code, the kind of bug behind #3.
+
 ## 1.1.0 — 2026-11-18
 
 ### Upgrade steps (from 1.0.x)
