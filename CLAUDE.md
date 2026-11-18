@@ -48,8 +48,9 @@ does **not** run migrations: apply the ones the check names.
 
 ### Upgrading an instance (including ones several releases behind)
 
-Follow README "Upgrading an existing instance"; `CHANGELOG.md` lists each
-release's upgrade steps. In short: pull → on the server, `node
+Follow README "Upgrading an existing instance" (or the full procedure in
+`docs/UPGRADING_WITH_CLAUDE.md`); `CHANGELOG.md` lists each release's upgrade
+steps. In short: pull → on the server, `node
 scripts/check-schema.js` → apply every file it names, in order, until it prints
 ✅ → `./deploy.sh` → confirm the smoke test passed. Don't use
 `--skip-schema-check`, `--allow-stale` or skip the smoke test to get a deploy
