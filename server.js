@@ -2747,7 +2747,10 @@ Your intranet account now shows ${requestedEmail} as your work address.`;
         // Remove any conflicting virtual aliases
         console.log(`Removing conflicting aliases for ${requestedEmail}...`);
         creationLog.push(`Removing conflicting aliases for ${requestedEmail}...`);
-        await execAsync(`sudo sed -i '/^${requestedEmail}.*${serverUsername}$/d' /etc/postfix/virtual && sudo postmap /etc/postfix/virtual`);
+        // Mailboxes used to belong to Linux users named <local part>-<MAIL_USER_SUFFIX>; drop any
+        // alias still pointing this address at one, or Postfix would route around the virtual mailbox.
+        const legacySystemUser = `${requestedEmail.split('@')[0]}-${MAIL_USER_SUFFIX}`;
+        await execAsync(`sudo sed -i '/^${requestedEmail}.*${legacySystemUser}$/d' /etc/postfix/virtual && sudo postmap /etc/postfix/virtual`);
         creationLog.push(`✓ Conflicting aliases removed`);
 
         // Reload Postfix
@@ -2881,7 +2884,7 @@ ${SITE_TEAM}`;
             <h4>IMAP Settings (Recommended):</h4>
             <ul>
               <li><strong>Email</strong>: ${requestedEmail}</li>
-              <li><strong>Username</strong>: ${username}-${MAIL_USER_SUFFIX}</li>
+              <li><strong>Username</strong>: ${requestedEmail}</li>
               <li><strong>Password</strong>: <code>${tempPassword}</code></li>
               <li><strong>IMAP Server</strong>: mail.${COMPANY_EMAIL_DOMAIN}</li>
               <li><strong>IMAP Port</strong>: 993 (SSL/TLS)</li>

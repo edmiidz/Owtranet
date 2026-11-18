@@ -21,6 +21,13 @@ jobs:
           node --check email-receipt-processor.js
           node --check docker/init.js
           bash -n deploy.sh scripts/smoke-test.sh test/db/upgrade-test.sh
+      - name: No undefined variables in server code
+        # node --check can't see these; they only throw at runtime (see #3).
+        run: >-
+          npx -y eslint@8.57.0 --no-eslintrc --env node,es2022
+          --parser-options ecmaVersion:2022 --rule '{"no-undef":"error"}'
+          server.js server/routes/*.js server/lib/*.js server/cron/*.js server/scripts/*.js
+          email-receipt-processor.js emailUtils.js utils/*.js scripts/*.js docker/*.js
       - name: Unit tests
         run: npm test
 
