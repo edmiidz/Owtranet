@@ -203,6 +203,7 @@ const profileUpdateSchema = z.object({
     .optional()
     .or(z.literal('')),
   email_notification_preference: z.enum(['personal', 'company', 'both']).optional(),
+  email_notification_mode: z.enum(['always', 'when_away', 'when_signed_out', 'never']).optional(),
   email_provider: z.enum(['self_hosted', 'microsoft_365', 'google_workspace']).optional(),
   agent_embed_code: z.string()
     .max(2000, 'Agent embed code cannot exceed 2000 characters')
@@ -215,7 +216,7 @@ type ProfileUpdateFormData = z.infer<typeof profileUpdateSchema>;
 const ProfilePage: React.FC = () => {
   const { username } = useParams<{ username: string }>();
   const { user: currentUser, updateUser } = useAuthStore();
-  const { companyName, companyEmailDomain, emailProviders, defaultEmailProvider } = useBrandingStore();
+  const { companyName, companyEmailDomain, emailProviders, defaultEmailProvider, emailNotifyAwayMinutes } = useBrandingStore();
   const [profile, setProfile] = useState<UserType | null>(null);
   const [githubIssues, setGithubIssues] = useState<GitHubIssue[]>([]);
   const [userPosts, setUserPosts] = useState<Post[]>([]);
@@ -291,6 +292,7 @@ const ProfilePage: React.FC = () => {
           github_username: userData.github_username || '',
           calendar_link: userData.calendar_link || '',
           email_notification_preference: userData.email_notification_preference || 'company',
+          email_notification_mode: userData.email_notification_mode || 'when_away',
           email_provider: userData.email_provider || defaultEmailProvider,
           agent_embed_code: userData.agent_embed_code || '',
         });
@@ -924,10 +926,33 @@ const ProfilePage: React.FC = () => {
                 <option value="both">Both Addresses</option>
               </select>
               <p className="mt-1 text-xs text-gray-500">
-                Choose which email address to receive notifications on when you're offline (30+ minutes since last login).
+                Which address mention, comment and direct-message emails go to.
               </p>
               {errors.email_notification_preference && (
                 <p className="mt-1 text-sm text-red-600">{errors.email_notification_preference.message}</p>
+              )}
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Email Notifications
+              </label>
+              <select
+                {...register('email_notification_mode')}
+                className="form-input"
+              >
+                <option value="when_away">Only when I'm away from the web and mobile app</option>
+                <option value="when_signed_out">Only when I'm away and signed out of the mobile app</option>
+                <option value="always">Always, even while I'm using the app</option>
+                <option value="never">Never (in-app and push notifications only)</option>
+              </select>
+              <p className="mt-1 text-xs text-gray-500">
+                While you're using {companyName} on the web or the mobile app you already see notifications there, so by default no email is sent.
+                "Away" means no activity for {emailNotifyAwayMinutes} minutes. If you keep the mobile app signed in, push notifications reach you there,
+                so you can choose to skip email until you sign out of it.
+              </p>
+              {errors.email_notification_mode && (
+                <p className="mt-1 text-sm text-red-600">{errors.email_notification_mode.message}</p>
               )}
             </div>
 

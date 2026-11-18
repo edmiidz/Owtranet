@@ -19,6 +19,7 @@ const { EmailManager, EmailCrypto } = require('./emailUtils');
 const { analyzeDocument } = require('./utils/aiAnalyzer');
 const fieldCrypto = require('./utils/fieldCrypto');
 const { createAgentResponder, extractMentionTokens } = require('./server/lib/aiAgents');
+const { EMAIL_NOTIFICATION_MODES, awayMinutes: emailNotifyAwayMinutes, touchUserActivity, checkEmailNotification } = require('./server/lib/emailNotifications');
 const { findUsersByEmail } = require('./server/lib/emailIdentity'); // Gmail dot-insensitive sign-in lookup
 require('dotenv').config();
 
@@ -382,6 +383,9 @@ function authenticateToken(req, res, next) {
       return res.status(403).json({ error: 'Invalid or expired token' });
     }
     req.user = user;
+    // Presence for email notifications: anyone making signed-in web/mobile
+    // requests is "here" and doesn't need those emails (throttled, fire-and-forget).
+    touchUserActivity(db, user.userId);
 
     // Check for pending_agreement role and enforce agreement requirement
     const allowedPaths = [
@@ -749,23 +753,14 @@ async function processMentions(content, entityType, entityId, userId, mentioning
         ]
       );
 
-      // Send email notification to mentioned user if they're offline
+      // Email the mentioned user too, unless their email_notification_mode says not to
       try {
-        const [mentionedUserData] = await db.execute(
-          'SELECT email, name, company_email, last_login, email_notification_preference FROM users WHERE id = ?',
-          [mentionedUserId]
-        );
-        
-        if (mentionedUserData.length > 0) {
-          const mentionedUser = mentionedUserData[0];
+        const { user: mentionedUser, send, reason } = await checkEmailNotification(db, mentionedUserId);
+
+        if (mentionedUser) {
           const emailToUse = getNotificationEmail(mentionedUser);
-          
-          // Check if user was online recently (within last 30 minutes)
-          const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
-          const lastLogin = mentionedUser.last_login ? new Date(mentionedUser.last_login) : new Date(0);
-          const isUserOffline = lastLogin < thirtyMinutesAgo;
-          
-          if (isUserOffline) {
+
+          if (send) {
             const contentUrl = entityType === 'post' 
               ? `${process.env.BASE_URL}/forum/post/${notificationData.postId || entityId}`
               : `${process.env.BASE_URL}/forum/post/${notificationData.postId}`;
@@ -803,9 +798,9 @@ ${SITE_TEAM}`;
             for (const email of emailsToSend) {
               await sendEmail(email, emailSubject, emailText, emailHtml);
             }
-            console.log(`Mention email notification sent to ${emailsToSend.join(', ')} for offline user ${mentionedUser.name}`);
+            console.log(`Mention email notification sent to ${emailsToSend.join(', ')} for user ${mentionedUser.name} (${reason})`);
           } else {
-            console.log(`User ${mentionedUser.name} is online, skipping email notification for mention`);
+            console.log(`Skipping mention email to ${mentionedUser.name}: ${reason}`);
           }
         }
       } catch (emailError) {
@@ -852,6 +847,7 @@ app.get('/api/config/branding', (req, res) => {
     baseCurrency: BASE_CURRENCY,
     emailProviders: EMAIL_PROVIDER_OPTIONS,
     defaultEmailProvider: DEFAULT_EMAIL_PROVIDER,
+    emailNotifyAwayMinutes: emailNotifyAwayMinutes(),
   });
 });
 
@@ -4641,21 +4637,13 @@ async function createComment(postId, user, content, parentId = null, opts = {}) 
     );
 
     try {
-      const [authorData] = await db.execute(
-        'SELECT email, name, company_email, last_login, email_notification_preference FROM users WHERE id = ?',
-        [post.user_id]
-      );
+      // Email the author too, unless their email_notification_mode says not to
+      const { user: author, send, reason } = await checkEmailNotification(db, post.user_id);
 
-      if (authorData.length > 0) {
-        const author = authorData[0];
+      if (author) {
         const emailToUse = getNotificationEmail(author);
 
-        // Only email authors who have not been online in the last 30 minutes
-        const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
-        const lastLogin = author.last_login ? new Date(author.last_login) : new Date(0);
-        const isUserOffline = lastLogin < thirtyMinutesAgo;
-
-        if (isUserOffline) {
+        if (send) {
           const postUrl = `${process.env.BASE_URL}/forum/post/${postId}`;
 
           const emailSubject = `New Comment on Your Post - ${SITE_NAME}`;
@@ -4689,7 +4677,9 @@ ${SITE_TEAM}`;
           for (const email of emailsToSend) {
             await sendEmail(email, emailSubject, emailText, emailHtml);
           }
-          console.log(`Email notification sent to ${emailsToSend.join(', ')} for offline user ${author.name}`);
+          console.log(`Comment email notification sent to ${emailsToSend.join(', ')} for user ${author.name} (${reason})`);
+        } else {
+          console.log(`Skipping comment email to ${author.name}: ${reason}`);
         }
       }
     } catch (emailError) {
@@ -6369,7 +6359,7 @@ app.get('/api/users/:username', async (req, res, next) => {
       [users] = await db.execute(
         `SELECT id, email, name, github_username, intranet_username, avatar_url, bio,
                 department, position, company, company_email, role, created_at, last_login, calendar_link,
-                email_notification_preference, agent_embed_code, email_provider, account_type
+                email_notification_preference, email_notification_mode, agent_embed_code, email_provider, account_type
          FROM users WHERE id = ?`,
         [userId]
       );
@@ -6378,7 +6368,7 @@ app.get('/api/users/:username', async (req, res, next) => {
       [users] = await db.execute(
         `SELECT id, email, name, github_username, intranet_username, avatar_url, bio,
                 department, position, company, company_email, role, created_at, last_login, calendar_link,
-                email_notification_preference, agent_embed_code, email_provider, account_type
+                email_notification_preference, email_notification_mode, agent_embed_code, email_provider, account_type
          FROM users WHERE intranet_username = ?`,
         [username]
       );
@@ -6388,7 +6378,7 @@ app.get('/api/users/:username', async (req, res, next) => {
         [users] = await db.execute(
           `SELECT u.id, u.email, u.name, u.github_username, u.intranet_username, u.avatar_url, u.bio,
                   u.department, u.position, u.company, u.company_email, u.role, u.created_at, u.last_login, u.calendar_link,
-                  u.email_notification_preference, u.agent_embed_code, u.email_provider, u.account_type
+                  u.email_notification_preference, u.email_notification_mode, u.agent_embed_code, u.email_provider, u.account_type
            FROM ai_agents a JOIN users u ON u.id = a.user_id WHERE a.handle = ?`,
           [username]
         );
@@ -6460,7 +6450,7 @@ app.put('/api/users/:userId', authenticateToken, async (req, res) => {
       return res.status(403).json({ error: 'Unauthorized' });
     }
     
-    const { email, other_emails, bio, department, position, company, intranet_username, github_username, calendar_link, email_notification_preference, agent_embed_code, email_provider } = req.body;
+    const { email, other_emails, bio, department, position, company, intranet_username, github_username, calendar_link, email_notification_preference, email_notification_mode, agent_embed_code, email_provider } = req.body;
 
     // Email & calendar provider: only update when the client sent one (older clients /
     // the mobile app omit it). COALESCE below keeps the stored value on null.
@@ -6468,6 +6458,13 @@ app.put('/api/users/:userId', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: `Invalid email provider. Choose one of: ${EMAIL_PROVIDERS.join(', ')}` });
     }
     const emailProviderValue = email_provider || null;
+
+    // When notification emails go out. Same rule as email_provider: the mobile app
+    // doesn't send it, so null keeps the stored value.
+    if (email_notification_mode && !EMAIL_NOTIFICATION_MODES.includes(email_notification_mode)) {
+      return res.status(400).json({ error: `Invalid email notification mode. Choose one of: ${EMAIL_NOTIFICATION_MODES.join(', ')}` });
+    }
+    const emailNotificationModeValue = email_notification_mode || null;
     
     // Check if email is unique and not a company email (if provided)
     if (email && email.trim()) {
@@ -6511,13 +6508,13 @@ app.put('/api/users/:userId', authenticateToken, async (req, res) => {
     // Update user profile (only update email if provided)
     if (email && email.trim()) {
       await db.execute(
-        'UPDATE users SET email = ?, other_emails = ?, bio = ?, department = ?, position = ?, company = ?, intranet_username = ?, github_username = ?, calendar_link = ?, email_notification_preference = ?, agent_embed_code = ?, email_provider = COALESCE(?, email_provider) WHERE id = ?',
-        [email.trim().toLowerCase(), other_emails?.trim() || null, bio, department, position, company, intranet_username?.trim() || null, github_username?.trim() || null, calendar_link?.trim() || null, email_notification_preference || 'company', agent_embed_code?.trim() || null, emailProviderValue, userId]
+        'UPDATE users SET email = ?, other_emails = ?, bio = ?, department = ?, position = ?, company = ?, intranet_username = ?, github_username = ?, calendar_link = ?, email_notification_preference = ?, email_notification_mode = COALESCE(?, email_notification_mode), agent_embed_code = ?, email_provider = COALESCE(?, email_provider) WHERE id = ?',
+        [email.trim().toLowerCase(), other_emails?.trim() || null, bio, department, position, company, intranet_username?.trim() || null, github_username?.trim() || null, calendar_link?.trim() || null, email_notification_preference || 'company', emailNotificationModeValue, agent_embed_code?.trim() || null, emailProviderValue, userId]
       );
     } else {
       await db.execute(
-        'UPDATE users SET other_emails = ?, bio = ?, department = ?, position = ?, company = ?, intranet_username = ?, github_username = ?, calendar_link = ?, email_notification_preference = ?, agent_embed_code = ?, email_provider = COALESCE(?, email_provider) WHERE id = ?',
-        [other_emails?.trim() || null, bio, department, position, company, intranet_username?.trim() || null, github_username?.trim() || null, calendar_link?.trim() || null, email_notification_preference || 'company', agent_embed_code?.trim() || null, emailProviderValue, userId]
+        'UPDATE users SET other_emails = ?, bio = ?, department = ?, position = ?, company = ?, intranet_username = ?, github_username = ?, calendar_link = ?, email_notification_preference = ?, email_notification_mode = COALESCE(?, email_notification_mode), agent_embed_code = ?, email_provider = COALESCE(?, email_provider) WHERE id = ?',
+        [other_emails?.trim() || null, bio, department, position, company, intranet_username?.trim() || null, github_username?.trim() || null, calendar_link?.trim() || null, email_notification_preference || 'company', emailNotificationModeValue, agent_embed_code?.trim() || null, emailProviderValue, userId]
       );
     }
     
@@ -7885,23 +7882,14 @@ async function deliverDirectMessage(senderId, recipientId, content, replyToId = 
     })
   ]);
   
-  // Send email notification to recipient if they're offline
+  // Email the recipient too, unless their email_notification_mode says not to
   try {
-    const [recipientData] = await db.execute(
-      'SELECT email, name, company_email, last_login, email_notification_preference FROM users WHERE id = ?',
-      [recipientId]
-    );
-    
-    if (recipientData.length > 0) {
-      const recipientUser = recipientData[0];
+    const { user: recipientUser, send, reason } = await checkEmailNotification(db, recipientId);
+
+    if (recipientUser) {
       const emailToUse = getNotificationEmail(recipientUser);
-      
-      // Check if user was online recently (within last 30 minutes)
-      const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
-      const lastLogin = recipientUser.last_login ? new Date(recipientUser.last_login) : new Date(0);
-      const isUserOffline = lastLogin < thirtyMinutesAgo;
-      
-      if (isUserOffline) {
+
+      if (send) {
         const messageUrl = `${process.env.BASE_URL}/messages?user=${senderUsername}`;
         
         const emailSubject = `💬 New Message from ${senderName} - ${SITE_NAME}`;
@@ -7914,7 +7902,7 @@ Message Preview:
 
 Read and reply at: ${messageUrl}
 
-You're receiving this email because you haven't been active on the intranet recently. Log in to stop receiving email notifications for messages.
+You're receiving this email because of your Email Notifications setting (by default, only while you're away from the intranet). You can change it on your profile.
 
 Best regards,
 ${SITE_TEAM}`;
@@ -7942,7 +7930,7 @@ ${SITE_TEAM}`;
           
           <div style="background: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; border-radius: 8px; margin-bottom: 25px;">
             <p style="margin: 0; font-size: 14px; color: #856404;">
-              📧 <strong>Email Notifications:</strong> You're receiving this email because you haven't been active on the intranet recently. Log in to stop receiving email notifications for messages.
+              📧 <strong>Email Notifications:</strong> You're receiving this email because of your Email Notifications setting (by default, only while you're away from the intranet). You can change it on your profile.
             </p>
           </div>
           
@@ -7956,9 +7944,9 @@ ${SITE_TEAM}`;
         for (const email of emailsToSend) {
           await sendEmail(email, emailSubject, emailText, emailHtml);
         }
-        console.log(`Direct message email notification sent to ${emailsToSend.join(', ')} for offline user ${recipientUser.name}`);
+        console.log(`Direct message email notification sent to ${emailsToSend.join(', ')} for user ${recipientUser.name} (${reason})`);
       } else {
-        console.log(`User ${recipientUser.name} is online, skipping email notification for direct message`);
+        console.log(`Skipping direct message email to ${recipientUser.name}: ${reason}`);
       }
     }
   } catch (emailError) {

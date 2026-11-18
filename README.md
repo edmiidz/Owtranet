@@ -191,6 +191,11 @@ for the full list. The main groups are:
   are used across the UI (via the public `GET /api/config/branding`), e-mails
   and AI prompts.
 - **Outbound mail**: `SES_SMTP_*` works with any SMTP relay.
+- **Notification e-mails**: mentions, comments on your posts and direct
+  messages are e-mailed only while a member is away (no web or mobile activity
+  for `EMAIL_NOTIFY_AWAY_MINUTES`, default 30). Each member can change this
+  under *Email Notifications* on their profile: always, only when away, only
+  when away and signed out of the mobile app, or never.
 - **Self-hosted mail**: `MAIL_*` and `DEFAULT_EMAIL_PROVIDER`. See
   [docs/EMAIL_SYSTEM_ARCHITECTURE.md](docs/EMAIL_SYSTEM_ARCHITECTURE.md). Skip
   it and set `DEFAULT_EMAIL_PROVIDER=google_workspace` or `microsoft_365` if

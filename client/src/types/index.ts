@@ -32,6 +32,8 @@ export interface User {
   company_email_created_at?: string;
   company_email_last_reset?: string;
   email_notification_preference?: 'personal' | 'company' | 'both';
+  /** When mention/comment/DM emails go out (server/lib/emailNotifications.js) */
+  email_notification_mode?: 'always' | 'when_away' | 'when_signed_out' | 'never';
   /** Mail + calendar provider; null/undefined = instance default (branding.defaultEmailProvider) */
   email_provider?: EmailProvider | null;
   agent_embed_code?: string;
