@@ -5,13 +5,13 @@ webmail credentials, API tokens), so security reports are taken seriously.
 
 ## Reporting a vulnerability
 
-Please **do not open a public issue**. Report privately through GitHub:
-**Security → Report a vulnerability** on this repository
-(https://github.com/edmiidz/Owtranet/security/advisories/new).
+Owtranet is pre-release, so for now please report vulnerabilities as ordinary
+**public issues** on this repository, labelled or titled as security issues.
+This will change to a private reporting channel before the first stable
+release, and this file will be updated when it does.
 
 Include the affected version or commit, steps to reproduce, and the impact you
-expect. You should get an acknowledgement within a few days. Once a fix is
-released, the advisory is published with credit to you unless you ask
+expect. Credit is given in the fixing commit or release notes unless you ask
 otherwise.
 
 ## Supported versions

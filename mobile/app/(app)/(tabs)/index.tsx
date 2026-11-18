@@ -37,7 +37,7 @@ export default function HomeScreen() {
     <Screen refreshing={refreshing} onRefresh={refresh}>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
         <View>
-          <Small>{branding?.companyName || 'Intranet'}</Small>
+          <Small>{branding?.companyName || 'Owtranet'}</Small>
           <H1 style={{ marginBottom: 0 }}>Hi {first || 'there'}</H1>
         </View>
         <Pressable onPress={() => router.push('/notifications')} style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>

@@ -20,21 +20,42 @@ cd client && npm run dev      # Vite on :3000, proxies /api → :3006
 cd client && npm run build    # tsc + vite build → client/dist
 cd mobile && npx tsc --noEmit # typecheck the Expo app
 node --check server.js        # syntax gate before any deploy
+npm test                      # unit tests (node:test, no DB needed)
+npm run check-schema          # instance DB vs db/schema.sql; names missing migrations
+DB_PASSWORD=… test/db/upgrade-test.sh   # fresh install + upgrade from 1.0.0 on real MySQL
 ./deploy.sh                   # rsync deploy (configure .deploy.env)
 ./deploy.sh --client          # frontend only, no restart (also --no-build, --allow-stale)
 ```
 
-There is no automated test suite, and `client`'s `npm run lint` has no ESLint
-config to run against yet. Verification is `node --check server.js`, the
-client build, the mobile typecheck, and `scripts/smoke-test.sh` (run by
-`deploy.sh` after restart; it SSHes to the box, mints an admin JWT and asserts
-200 on the main read endpoints).
+Tests are light: `npm test` covers `server/lib` units, and
+`test/db/upgrade-test.sh` loads `db/schema.sql` fresh and upgrades the 1.0.0
+schema through the migrations `check-schema` names (each applied twice). CI
+(`.github/workflows/ci.yml`, `docker.yml`) runs both plus a Docker Compose
+install. `client`'s `npm run lint` has no ESLint config yet. Beyond that,
+verification is `node --check server.js`, the client build, the mobile
+typecheck, and `scripts/smoke-test.sh` (run by `deploy.sh` after restart; it
+SSHes to the box, mints an admin JWT and asserts 200 on the main read endpoints).
 
 `deploy.sh` refuses to deploy from a clone behind origin, builds `client/dist`
 locally, and never touches the server's `.env`, `uploads/`, `node_modules/` or
-`ecosystem.config.js`. It does **not** run migrations or `npm install`: apply
-new `server/migrations/*.sql` to each instance DB before deploying code that
-needs them, and run `npm install --omit=dev` on the server when deps change.
+`ecosystem.config.js`. Before restarting it runs `scripts/check-schema.js` on
+the server and stops (exit 6, old version still running) if the DB lacks
+anything in `db/schema.sql`. It does **not** run migrations or `npm install`:
+apply the migrations the check names, and run `npm install --omit=dev` on the
+server when deps change.
+
+### Upgrading an instance (including ones several releases behind)
+
+Follow README "Upgrading an existing instance"; `CHANGELOG.md` lists each
+release's upgrade steps. In short: pull → on the server, `node
+scripts/check-schema.js` → apply every file it names, in order, until it prints
+✅ → `./deploy.sh` → confirm the smoke test passed. Don't use
+`--skip-schema-check`, `--allow-stale` or skip the smoke test to get a deploy
+through: they exist for emergencies, and each guards against a real failure
+(500s from missing columns, rolling back other people's work). If the check
+lists something under "Not added by any migration file", stop and ask the
+operator rather than hand-writing DDL. Take a `mysqldump` before applying
+migrations to a database that is several releases behind.
 
 Fresh database: `db/schema.sql` → `db/seed.sql` → `node scripts/create-admin.js`
 → `db/seed_team_agreement.sql`.
@@ -56,6 +77,12 @@ Fresh database: `db/schema.sql` → `db/seed.sql` → `node scripts/create-admin
   `node server/scripts/seedAiAgents.js`.
 - **`server/lib/scheduledEmails.js`** + `server/cron/scheduledEmailSender.js`:
   scheduled webmail sends (times in UTC).
+- **`server/lib/emailNotifications.js`**: whether a mention/comment/DM is also
+  emailed (`users.email_notification_mode`, presence from `users.last_active_at`,
+  which `authenticateToken` stamps). Any new "email the user about X" path
+  should go through `checkEmailNotification()`.
+- **`server/lib/schemaCheck.js`**: live DB vs `db/schema.sql`; used by
+  `scripts/check-schema.js`, `docker/init.js` and the startup log.
 - **`server/cron/`**: PM2 workers (radio summaries, push dispatch, auto-approve,
   doc sweep, scheduled mail). They are dry-run by default; pass `--apply` to write
   and `--daemon` to loop. See `server/cron/README.md`; PM2 wiring is in
@@ -71,8 +98,12 @@ Fresh database: `db/schema.sql` → `db/seed.sql` → `node scripts/create-admin
   and `system`.
 - **Mail**: each member's provider is `users.email_provider`
   (`self_hosted` | `microsoft_365` | `google_workspace`, NULL = `DEFAULT_EMAIL_PROVIDER`).
-  Webmail and Email Requests only apply to `self_hosted`. The company address is
-  `users.company_email`.
+  Webmail and automatic mailbox provisioning only apply to `self_hosted`. Email
+  Requests work for every provider: approving one for `google_workspace` /
+  `microsoft_365` sets `users.company_email` and tells the admin to create the
+  mailbox in that provider's console (`EXTERNAL_MAILBOX_PROVIDERS` in `server.js`).
+  Members join with their **personal** address (`users.email`); the company
+  address (`users.company_email`) comes later through an Email Request.
 - **Branding**: `COMPANY_NAME` / `COMPANY_SHORT_NAME` / `COMPANY_EMAIL_DOMAIN`
   are exposed to clients by `GET /api/config/branding` (`client/src/stores/brandingStore.ts`).
   Use backtick template literals when interpolating them server-side.
@@ -82,7 +113,10 @@ Fresh database: `db/schema.sql` → `db/seed.sql` → `node scripts/create-admin
 - Raw SQL with parameters via `mysql2`. No ORM. MySQL 8.4 rejects bound
   `LIMIT ?`, so inline validated integers instead.
 - Schema changes: add an idempotent file in `server/migrations/` **and** update
-  `db/schema.sql`.
+  `db/schema.sql`. CI fails if a `schema.sql` addition has no migration or a
+  migration can't be re-run.
+- User-visible changes and upgrade steps go in `CHANGELOG.md`; bump
+  `package.json` `version` when cutting a release.
 - Dates: short `YYYY-MM-DD` (`toLocaleDateString('en-CA')`); long
   `YYYY-MM-DD HH:MM:SS TZ`.
 - When a page depends on a new read endpoint, add that endpoint to `scripts/smoke-test.sh`.
