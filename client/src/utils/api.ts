@@ -423,7 +423,7 @@ export const invitesApi = {
     email?: string;
     name?: string;
     expires_days?: number;
-  }): Promise<{ inviteId: number; code: string; url: string; expires_at: string }> => {
+  }): Promise<{ inviteId: number; code: string; url: string; expires_at: string; email_sent: boolean }> => {
     const response = await api.post('/invites', data);
     return response.data;
   },

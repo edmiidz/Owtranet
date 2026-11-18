@@ -1662,6 +1662,7 @@ app.post('/api/invites', authenticateToken, requireAdmin, [
     console.log('email truthiness:', !!email);
     
     // Send email invitation if email is provided
+    let emailSent = false;
     if (email) {
       console.log('=== ABOUT TO SEND INVITATION EMAIL ===');
       console.log('Email:', email);
@@ -1729,6 +1730,7 @@ ${SITE_TEAM}
         `;
         
         await sendEmail(email, emailSubject, emailText, emailHtml);
+        emailSent = true;
         console.log(`Invitation email sent to ${email} for invite code ${inviteCode}`);
       } catch (emailError) {
         console.error('Failed to send invitation email:', emailError);
@@ -1736,17 +1738,15 @@ ${SITE_TEAM}
       }
     }
     
-    console.log('=== FINAL EMAIL STATUS ===');
-    console.log('email still:', email);
-    console.log('Will return email_sent:', !!email);
-    
     res.status(201).json({
-      message: email ? 'Invite code created and email sent!' : 'Invite code created',
+      message: !email ? 'Invite code created'
+        : emailSent ? 'Invite code created and email sent!'
+        : 'Invite code created, but the email could not be sent. Share the link instead.',
       inviteId: result.insertId,
       code: inviteCode,
       url: inviteUrl,
       expires_at: expiresAt,
-      email_sent: !!email
+      email_sent: emailSent
     });
   } catch (error) {
     console.error('Create invite error:', error);

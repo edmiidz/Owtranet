@@ -250,7 +250,11 @@ const AdminPage: React.FC = () => {
       };
       
       const response = await invitesApi.createInvite(inviteData);
-      setSuccess(`Invite created! Code: ${response.code}`);
+      if (inviteData.email && !response.email_sent) {
+        setError(`Invite created, but the email to ${inviteData.email} could not be sent (check the server's mail settings). Share this link instead: ${response.url}`);
+      } else {
+        setSuccess(`Invite created! Code: ${response.code}${inviteData.email ? ` (emailed to ${inviteData.email})` : ''}`);
+      }
       reset();
       loadData(); // Reload invites
     } catch (err: any) {

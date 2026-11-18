@@ -14,15 +14,19 @@
 # What it does:
 #   1. Refuses to deploy from a clone that is behind origin (it would roll back others' work)
 #   2. Builds client/dist locally (small servers can run out of memory building Vite)
-#   3. rsyncs client/dist and the backend paths below, then verifies server.js landed
-#   4. Checks the server's database has every table/column the new code needs
+#   3. rsyncs client/dist and the backend paths below (creating DEPLOY_PATH on a
+#      fresh server), then verifies server.js landed
+#   4. Installs server dependencies with `npm ci --omit=dev` from the shipped
+#      package-lock.json when node_modules is missing or the lockfile changed
+#   5. Checks the server's database has every table/column the new code needs
 #      (scripts/check-schema.js) and stops BEFORE restarting if not, so the old
 #      version keeps running until you apply the named migration(s)
-#   5. Syntax-checks, restarts PM2, and runs scripts/smoke-test.sh
+#   6. Syntax-checks, restarts PM2 (first deploy: starts PM2_APP from
+#      ecosystem.config.js and saves), and runs scripts/smoke-test.sh
 #
-# It never touches .env, uploads/, logs/, node_modules/, server/data/ or
-# ecosystem.config.js on the server. Run `npm install --omit=dev` on the server
-# yourself when package.json dependencies change.
+# It never touches .env, uploads/, logs/ or server/data/ on the server, and
+# never overwrites ecosystem.config.js (on a fresh server it copies the repo's
+# template once; edit it there to enable workers).
 #
 # Usage:
 #   ./deploy.sh              # build + deploy everything + restart
@@ -50,6 +54,7 @@ SERVER_PATHS=(
   "emailUtils.js"
   "email-receipt-processor.js"
   "package.json"
+  "package-lock.json"
   "utils/"
   "api/"
   "scripts/"
@@ -88,6 +93,9 @@ if [ "$DO_BUILD" = "1" ]; then
   ( cd client && npm run build )
 fi
 
+# Fresh server: rsync can't create the nested target directories itself.
+$SSH "$TARGET" "mkdir -p $DEPLOY_PATH/client/dist"
+
 echo "📤 client/dist → $TARGET:$DEPLOY_PATH/client/dist"
 rsync -az --delete -e "$SSH" client/dist/ "$TARGET:$DEPLOY_PATH/client/dist/"
 
@@ -111,6 +119,28 @@ if [ "$DO_SERVER" = "1" ]; then
     echo "❌ server.js on the server does not match this clone — backend rsync failed."
     exit 5
   fi
+
+  # PM2 config: copied once on a fresh server, never overwritten after that.
+  rsync -az --ignore-existing -e "$SSH" ecosystem.config.js "$TARGET:$DEPLOY_PATH/ecosystem.config.js"
+
+  # Dependencies: npm ci from the shipped lockfile when it changed. An existing
+  # node_modules with no recorded hash (instances set up before this step) is
+  # assumed current and only gets the hash recorded, so nothing is reinstalled
+  # under a running app unless the lockfile actually changes.
+  $SSH "$TARGET" "cd $DEPLOY_PATH && set -e
+    HASH=\$(sha1sum package-lock.json | cut -d' ' -f1)
+    MARK=node_modules/.owtranet-lock-sha1
+    if [ ! -d node_modules ]; then
+      echo '📦 Installing server dependencies (npm ci --omit=dev)...'
+      npm ci --omit=dev --no-audit --no-fund
+      echo \$HASH > \$MARK
+    elif [ ! -f \$MARK ]; then
+      echo \$HASH > \$MARK
+    elif [ \"\$(cat \$MARK)\" != \"\$HASH\" ]; then
+      echo '📦 package-lock.json changed: npm ci --omit=dev...'
+      npm ci --omit=dev --no-audit --no-fund
+      echo \$HASH > \$MARK
+    fi"
 fi
 
 if [ "$DO_RESTART" = "1" ] && [ "$SCHEMA_CHECK" = "1" ]; then
@@ -128,7 +158,12 @@ if [ "$DO_RESTART" = "1" ]; then
   $SSH "$TARGET" "cd $DEPLOY_PATH \
     && node --check server.js \
     && node --check email-receipt-processor.js \
-    && $PM2 restart $PM2_APP $PM2_EXTRA --update-env \
+    && if $PM2 describe $PM2_APP >/dev/null 2>&1; then \
+         $PM2 restart $PM2_APP $PM2_EXTRA --update-env; \
+       else \
+         echo '🆕 $PM2_APP is not running yet: starting it from ecosystem.config.js'; \
+         $PM2 start ecosystem.config.js --only $PM2_APP && $PM2 save; \
+       fi \
     && sleep 3 \
     && $PM2 logs $PM2_APP --lines 8 --nostream | tail -10"
   SSH_KEY="$DEPLOY_KEY" SERVER="$DEPLOY_HOST" SSH_USER="$DEPLOY_USER" \

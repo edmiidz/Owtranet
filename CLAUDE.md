@@ -40,9 +40,11 @@ SSHes to the box, mints an admin JWT and asserts 200 on the main read endpoints)
 locally, and never touches the server's `.env`, `uploads/`, `node_modules/` or
 `ecosystem.config.js`. Before restarting it runs `scripts/check-schema.js` on
 the server and stops (exit 6, old version still running) if the DB lacks
-anything in `db/schema.sql`. It does **not** run migrations or `npm install`:
-apply the migrations the check names, and run `npm install --omit=dev` on the
-server when deps change.
+anything in `db/schema.sql`. It ships `package-lock.json` and runs
+`npm ci --omit=dev` on the server when node_modules is missing or the lockfile
+changed. On a fresh server it creates the directories, copies
+`ecosystem.config.js` once (never overwritten) and starts `PM2_APP` from it. It
+does **not** run migrations: apply the ones the check names.
 
 ### Upgrading an instance (including ones several releases behind)
 
