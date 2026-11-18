@@ -38,7 +38,7 @@ interface ScheduledEmail {
   subject: string;
   text_body: string | null;
   attachments: { filename: string; size?: number }[];
-  status: 'scheduled' | 'sending' | 'sent' | 'failed' | 'cancelled';
+  status: 'scheduled' | 'sending' | 'sent' | 'failed' | 'cancelled' | 'delivery_unknown';
   attempts: number;
   last_error: string | null;
   scheduled_at: string;
@@ -91,7 +91,7 @@ const WebmailPage: React.FC = () => {
     }
   };
 
-  const pendingScheduledCount = scheduledEmails.filter(e => e.status === 'scheduled' || e.status === 'sending' || e.status === 'failed').length;
+  const pendingScheduledCount = scheduledEmails.filter(e => e.status !== 'sent' && e.status !== 'cancelled').length;
 
   const showNotice = (message: string) => {
     setNotice(message);
@@ -151,6 +151,10 @@ const WebmailPage: React.FC = () => {
       const response = await fetch(`/api/webmail/scheduled/${item.id}/send-now`, { method: 'POST', headers: authHeaders() });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
+        if (data.outcome === 'delivery_unknown') {
+          alert(data.details || 'Delivery could not be confirmed. Verify delivery before sending again.');
+          return;
+        }
         const retryNote = data.outcome === 'retry' ? ' It has been re-queued and will be retried automatically in about 5 minutes.' : '';
         throw new Error((data.details || data.error || `HTTP ${response.status}`) + retryNote);
       }
@@ -991,6 +995,7 @@ const WebmailPage: React.FC = () => {
                       sending:   { cls: 'bg-yellow-100 text-yellow-800', icon: <RefreshCw className="h-3 w-3 mr-1 animate-spin" />, label: 'Sending' },
                       sent:      { cls: 'bg-green-100 text-green-800', icon: <CheckCircle className="h-3 w-3 mr-1" />, label: 'Sent' },
                       failed:    { cls: 'bg-red-100 text-red-800', icon: <AlertTriangle className="h-3 w-3 mr-1" />, label: 'Failed' },
+                      delivery_unknown: { cls: 'bg-yellow-100 text-yellow-800', icon: <AlertTriangle className="h-3 w-3 mr-1" />, label: 'Delivery unconfirmed' },
                       cancelled: { cls: 'bg-gray-100 text-gray-700', icon: <Ban className="h-3 w-3 mr-1" />, label: 'Cancelled' }
                     }[item.status];
                     return (
@@ -1004,7 +1009,7 @@ const WebmailPage: React.FC = () => {
                               <span className="text-xs text-gray-500">
                                 {item.status === 'sent' && item.sent_at
                                   ? `Sent ${formatScheduledTime(item.sent_at)}`
-                                  : `${item.status === 'failed' ? 'Was due' : 'Sends'} ${formatScheduledTime(item.scheduled_at)}`}
+                                  : `${item.status === 'scheduled' || item.status === 'sending' ? 'Sends' : 'Was due'} ${formatScheduledTime(item.scheduled_at)}`}
                               </span>
                             </div>
                             <p className="text-sm font-medium text-gray-900 mt-2 truncate">{item.subject}</p>
@@ -1020,6 +1025,9 @@ const WebmailPage: React.FC = () => {
                             )}
                             {item.status === 'failed' && item.last_error && (
                               <p className="text-xs text-red-700 mt-1">Error after {item.attempts} attempt{item.attempts === 1 ? '' : 's'}: {item.last_error}</p>
+                            )}
+                            {item.status === 'delivery_unknown' && item.last_error && (
+                              <p className="text-xs text-yellow-800 mt-1">{item.last_error}</p>
                             )}
                           </div>
                           {actionable && (

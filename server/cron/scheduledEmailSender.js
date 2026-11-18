@@ -7,10 +7,8 @@
  * EmailManager.sendEmail() path the Compose button uses — so the message lands
  * in the account's Sent folder and in `sent_emails` exactly like a manual send.
  *
- * Failed sends retry up to MAX_ATTEMPTS (3) five minutes apart, then stay
- * `failed` with last_error for the user to see on the Scheduled tab.
- * Rows stuck in `sending` for 10+ minutes (worker crashed mid-send) are
- * released back to the queue at the start of each pass.
+ * Definitive temporary failures retry up to MAX_ATTEMPTS (3) five minutes
+ * apart. Unconfirmed submissions and stale in-flight rows require review.
  *
  * Usage:
  *   node server/cron/scheduledEmailSender.js                  # dry-run once (lists due rows)
@@ -44,14 +42,16 @@ function makePool() {
   });
 }
 
-async function runOnce(db, emailManager) {
-  const released = await sched.releaseStale(db);
-  if (released) log(`released ${released} stale 'sending' row(s) back to the queue`);
+async function runOnce(db, emailManager, { apply = APPLY } = {}) {
+  if (apply) {
+    const unresolved = await sched.markStaleDeliveryUnknown(db);
+    if (unresolved) log(`marked ${unresolved} stale 'sending' row(s) as unconfirmed`);
+  }
 
   const due = await sched.findDue(db);
   if (due.length === 0) return 0;
 
-  if (!APPLY) {
+  if (!apply) {
     const [rows] = await db.query(
       `SELECT id, user_id, to_addr, subject, scheduled_at, attempts FROM scheduled_emails WHERE id IN (${due.map(Number).join(',')})`
     );

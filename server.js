@@ -11048,7 +11048,7 @@ app.post('/api/webmail/draft', authenticateToken, [
 // ── Scheduled sends ────────────────────────────────────────────
 // Rows live in scheduled_emails; server/cron/scheduledEmailSender.js sends them.
 
-// List the caller's scheduled / in-flight / failed sends (+ sends from the last 7 days)
+// List the caller's scheduled, in-flight or unresolved sends and recent successes.
 app.get('/api/webmail/scheduled', authenticateToken, async (req, res) => {
   try {
     const emails = await scheduledEmails.listForUser(db, req.user.userId);
@@ -11101,8 +11101,11 @@ app.post('/api/webmail/scheduled/:id/send-now', authenticateToken, async (req, r
     const mine = await scheduledEmails.getForUser(db, id, req.user.userId);
     if (!mine) return res.status(404).json({ error: 'Scheduled email not found' });
     const claimed = await scheduledEmails.claim(db, id, ['scheduled', 'failed']);
-    if (!claimed) return res.status(409).json({ error: 'This email is no longer scheduled (already sent, sending, or cancelled)' });
+    if (!claimed) return res.status(409).json({ error: 'This email cannot be sent in its current state' });
     const result = await scheduledEmails.sendClaimed(db, emailManager, id);
+    if (result.outcome === 'delivery_unknown') {
+      return res.status(409).json({ error: 'Delivery could not be confirmed', details: result.error, outcome: result.outcome });
+    }
     if (result.outcome !== 'sent') {
       return res.status(500).json({ error: 'Failed to send email', details: result.error, outcome: result.outcome });
     }
