@@ -4,12 +4,13 @@
  *
  * A scheduled_emails row is a fully-composed message. Lifecycle:
  *   scheduled → sending → sent
- *                      ↘ scheduled (retry, attempts < MAX_ATTEMPTS)
+ *                      ↘ scheduled (definitive temporary rejection; bounded retries)
  *                      ↘ failed
+ *                      ↘ delivery_unknown (confirmation unavailable)
  *   scheduled|failed → cancelled (user)
  *
- * All DATETIMEs are UTC wall-clock strings compared against UTC_TIMESTAMP(),
- * so neither the Node process nor the MySQL session time zone matters.
+ * scheduled_at and sent_at are UTC wall-clock strings. MySQL maintains
+ * updated_at in its session time zone.
  */
 
 const MAX_ATTEMPTS = 3;
@@ -65,15 +66,15 @@ async function insertScheduledEmail(db, { userId, emailAccountId, to, cc, bcc, s
   return result.insertId;
 }
 
-/** Everything the user should see on the Scheduled tab: queued, in-flight, failed, and recent sends. */
+/** Queued, in-flight, unresolved, and recent successful sends. */
 async function listForUser(db, userId) {
   const [rows] = await db.execute(
     `SELECT ${SELECT_COLS}
        FROM scheduled_emails
       WHERE user_id = ?
-        AND (status IN ('scheduled','sending','failed')
+        AND (status IN ('scheduled','sending','failed','delivery_unknown')
              OR (status = 'sent' AND sent_at >= UTC_TIMESTAMP() - INTERVAL 7 DAY))
-      ORDER BY FIELD(status,'sending','scheduled','failed','sent'), scheduled_at ASC`,
+      ORDER BY FIELD(status,'sending','scheduled','delivery_unknown','failed','sent'), scheduled_at ASC`,
     [userId]
   );
   return rows.map(normalizeRow);
@@ -131,19 +132,34 @@ async function findDue(db, limit = 20) {
   return rows.map(r => r.id);
 }
 
-/** Return rows orphaned in 'sending' (worker died mid-send) to the queue. */
-async function releaseStale(db) {
+/** A stale attempt may already have reached SMTP, including attempts from older workers. */
+async function markStaleDeliveryUnknown(db) {
   const [r] = await db.execute(
-    `UPDATE scheduled_emails SET status = 'scheduled', last_error = CONCAT_WS(' | ', last_error, 'released stale sending row')
-      WHERE status = 'sending' AND updated_at < UTC_TIMESTAMP() - INTERVAL ? MINUTE`,
-    [STALE_SENDING_MINUTES]
+    `UPDATE scheduled_emails SET status = 'delivery_unknown', last_error = ?
+      WHERE status = 'sending' AND updated_at < CURRENT_TIMESTAMP - INTERVAL ? MINUTE`,
+    ['Sending stopped before delivery was recorded. Verify delivery before sending again.', STALE_SENDING_MINUTES]
   );
   return r.affectedRows;
 }
 
+// Nodemailer can report a timeout or a disconnect as CONN even after DATA.
+// Retry only a complete negative SMTP reply to a known submission command,
+// or a socket error explicitly raised by the OS connect operation.
+function submissionFailure(error) {
+  if (error?.code === 'ESOCKET' && error.syscall === 'connect') return 'retry';
+  const code = error?.responseCode;
+  const command = error?.command;
+  if (Number.isInteger(code) && code >= 400 && code < 600 &&
+      /^(?:AUTH(?: \S+)?|DATA|EHLO|HELO|MAIL FROM|RCPT TO|STARTTLS)$/.test(command) &&
+      typeof error.response === 'string' && error.response.startsWith(`${code} `)) {
+    return code < 500 ? 'retry' : 'failed';
+  }
+  return 'delivery_unknown';
+}
+
 /**
  * Send one claimed row. The caller must have claimed it (status = 'sending').
- * Marks it sent / scheduled-for-retry / failed. Never throws; returns the outcome.
+ * SMTP failures return their outcome. Database failures may throw.
  *
  * @param db           mysql2 pool or connection
  * @param emailManager instance of EmailManager from ../../emailUtils
@@ -160,22 +176,23 @@ async function sendClaimed(db, emailManager, id) {
   const row = rows[0];
   if (!row) return { id, outcome: 'skipped', error: 'row not in sending state' };
 
-  const fail = async (message) => {
-    const willRetry = row.attempts < MAX_ATTEMPTS;
+  const markUnknown = async (message, messageId = null) => {
     await db.execute(
       `UPDATE scheduled_emails
-          SET status = ?, last_error = ?,
-              scheduled_at = IF(?, UTC_TIMESTAMP() + INTERVAL ? MINUTE, scheduled_at)
-        WHERE id = ?`,
-      [willRetry ? 'scheduled' : 'failed', String(message).slice(0, 2000), willRetry ? 1 : 0, RETRY_DELAY_MINUTES, id]
+          SET status = 'delivery_unknown', last_error = ?, message_id = COALESCE(?, message_id)
+        WHERE id = ? AND status IN ('sending','delivery_unknown') AND attempts = ?`,
+      [message, messageId, id, row.attempts]
     );
-    return { id, outcome: willRetry ? 'retry' : 'failed', error: message, attempts: row.attempts };
+    return { id, outcome: 'delivery_unknown', error: message };
   };
 
   if (row.server_status !== 'active' || !row.email_password_encrypted) {
     // Not transient — don't burn retries on it.
-    await db.execute(`UPDATE scheduled_emails SET status = 'failed', last_error = ? WHERE id = ?`,
-      ['Email account is not active or not configured', id]);
+    await db.execute(
+      `UPDATE scheduled_emails SET status = 'failed', last_error = ?
+        WHERE id = ? AND status IN ('sending','delivery_unknown') AND attempts = ?`,
+      ['Email account is not active or not configured', id, row.attempts]
+    );
     return { id, outcome: 'failed', error: 'account inactive' };
   }
 
@@ -185,6 +202,7 @@ async function sendClaimed(db, emailManager, id) {
     contentType: a.contentType || 'application/octet-stream'
   }));
 
+  let result;
   try {
     // Same shape the immediate-send route hands to sendEmail (a server_email_accounts row).
     const emailConfig = {
@@ -193,7 +211,7 @@ async function sendClaimed(db, emailManager, id) {
       server_username: row.server_username,
       email_password_encrypted: row.email_password_encrypted
     };
-    const result = await emailManager.sendEmail(emailConfig, {
+    result = await emailManager.sendEmail(emailConfig, {
       to: row.to_addr,
       cc: row.cc || undefined,
       bcc: row.bcc || undefined,
@@ -202,14 +220,38 @@ async function sendClaimed(db, emailManager, id) {
       html: row.html_body || undefined,
       attachments
     });
-    await db.execute(
-      `UPDATE scheduled_emails SET status = 'sent', sent_at = UTC_TIMESTAMP(), message_id = ?, last_error = NULL WHERE id = ?`,
-      [result.messageId ? String(result.messageId).slice(0, 255) : null, id]
-    );
-    return { id, outcome: 'sent', messageId: result.messageId, rejected: result.rejected };
   } catch (err) {
-    return fail(err && err.message ? err.message : String(err));
+    const outcome = submissionFailure(err);
+    if (outcome === 'delivery_unknown') {
+      return markUnknown('Owtranet could not confirm whether SMTP accepted this message. Verify delivery before sending again.');
+    }
+    const message = String(err.message || err).slice(0, 2000);
+    const willRetry = outcome === 'retry' && row.attempts < MAX_ATTEMPTS;
+    await db.execute(
+      `UPDATE scheduled_emails
+          SET status = ?, last_error = ?,
+              scheduled_at = IF(?, UTC_TIMESTAMP() + INTERVAL ? MINUTE, scheduled_at)
+        WHERE id = ? AND status IN ('sending','delivery_unknown') AND attempts = ?`,
+      [willRetry ? 'scheduled' : 'failed', message, willRetry ? 1 : 0, RETRY_DELAY_MINUTES, id, row.attempts]
+    );
+    return { id, outcome: willRetry ? 'retry' : 'failed', error: message, attempts: row.attempts };
   }
+
+  const messageId = result.messageId ? String(result.messageId).slice(0, 255) : null;
+  try {
+    await db.execute(
+      `UPDATE scheduled_emails SET status = 'sent', sent_at = UTC_TIMESTAMP(), message_id = ?, last_error = NULL
+        WHERE id = ? AND status IN ('sending','delivery_unknown') AND attempts = ?`,
+      [messageId, id, row.attempts]
+    );
+  } catch (err) {
+    const message = 'SMTP accepted this message, but Owtranet could not record the send. Verify delivery before sending again.';
+    console.error('Could not record accepted scheduled email', id, err.code || err.message);
+    // Never go through the submission retry path after SMTP accepted the message.
+    // If this write also fails, the worker will mark the stale attempt unresolved.
+    return markUnknown(message, messageId);
+  }
+  return { id, outcome: 'sent', messageId: result.messageId, rejected: result.rejected };
 }
 
 module.exports = {
@@ -225,6 +267,6 @@ module.exports = {
   rescheduleForUser,
   claim,
   findDue,
-  releaseStale,
+  markStaleDeliveryUnknown,
   sendClaimed
 };

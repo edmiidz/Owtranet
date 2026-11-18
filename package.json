@@ -1,7 +1,7 @@
 {
   "name": "owtranet",
-  "version": "1.0.0",
-  "description": "Owtranet \u2014 self-hosted team intranet (forum, messaging, tasks, webmail, agreements, AI agents)",
+  "version": "1.1.0",
+  "description": "Owtranet — self-hosted team intranet (forum, messaging, tasks, webmail, agreements, AI agents)",
   "author": "Nik Edmiidz (https://triluna.app/edmiidz/booknow)",
   "license": "MIT",
   "main": "server.js",
@@ -9,7 +9,9 @@
     "start": "node server.js",
     "dev": "nodemon server.js",
     "build": "cd client && npm run build",
-    "setup": "npm install && cd client && npm install"
+    "setup": "npm install && cd client && npm install",
+    "test": "node --test test/*.test.js",
+    "check-schema": "node scripts/check-schema.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.65.0",

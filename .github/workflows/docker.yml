@@ -44,6 +44,16 @@ jobs:
           docker compose exec -T db sh -c 'mysql -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" "$MYSQL_DATABASE"' \
             < server/migrations/add_post_editors.sql
 
+      - name: Fresh Docker install matches db/schema.sql
+        run: docker compose exec -T app node scripts/check-schema.js
+
+      - name: New migrations are idempotent on a live install
+        run: |
+          for run in 1 2; do
+            docker compose exec -T db sh -c 'mysql -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" "$MYSQL_DATABASE"' \
+              < server/migrations/add_email_notification_mode.sql
+          done
+
       - name: Logs on failure
         if: failure()
         run: docker compose logs
