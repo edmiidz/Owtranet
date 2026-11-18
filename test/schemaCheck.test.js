@@ -2,7 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
-const { parseSchema, findMissing, suggestMigrations, formatReport, SCHEMA_FILE } = require('../server/lib/schemaCheck');
+const { parseSchema, parseEnums, findMissing, suggestMigrations, formatReport, SCHEMA_FILE } = require('../server/lib/schemaCheck');
 
 const SAMPLE = `
 CREATE TABLE \`users\` (
@@ -43,7 +43,7 @@ test('db/schema.sql parses into a plausible schema', () => {
 
 test('up-to-date database → nothing missing, empty report', async () => {
   const missing = await findMissing(liveDb({ users: ['id', 'email', 'email_notification_mode', 'extra_local_col'], mobile_devices: ['id', 'user_id'] }), SAMPLE);
-  assert.deepEqual(missing, { tables: [], columns: [] });
+  assert.deepEqual(missing, { tables: [], columns: [], enumValues: [] });
   assert.equal(formatReport(missing), '');
 });
 
@@ -69,4 +69,18 @@ test('names the migration that creates a missing table', () => {
 test('something no migration adds is reported as uncovered', () => {
   const { uncovered } = suggestMigrations({ tables: [], columns: [{ table: 'users', column: 'no_such_column_xyz' }] });
   assert.deepEqual(uncovered, ['users.no_such_column_xyz']);
+});
+
+test('parses ENUM values from schema.sql', () => {
+  assert.deepEqual(parseEnums(SAMPLE).get('users.email_notification_mode'), ['always', 'when_away']);
+});
+
+test('reports an ENUM column missing a value, and the migration that adds it', async () => {
+  const db = { async query() { return [[
+    { t: 'scheduled_emails', c: 'status', ty: "enum('scheduled','sending','sent','failed','cancelled')" },
+  ]]; } };
+  const schema = "CREATE TABLE `scheduled_emails` (\n  `status` enum('scheduled','sending','sent','failed','cancelled','delivery_unknown') NOT NULL\n) ENGINE=InnoDB;";
+  const missing = await findMissing(db, schema);
+  assert.deepEqual(missing.enumValues, [{ table: 'scheduled_emails', column: 'status', values: ['delivery_unknown'] }]);
+  assert.match(formatReport(missing), /add_scheduled_email_delivery_unknown\.sql/);
 });

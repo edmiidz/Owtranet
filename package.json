@@ -10,7 +10,7 @@
     "dev": "nodemon server.js",
     "build": "cd client && npm run build",
     "setup": "npm install && cd client && npm install",
-    "test": "node --test test/*.test.js",
+    "test": "node --test test/*.test.js server/test/*.test.js",
     "check-schema": "node scripts/check-schema.js"
   },
   "dependencies": {
