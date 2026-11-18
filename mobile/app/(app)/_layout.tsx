@@ -9,6 +9,7 @@ import { palette } from '@/theme';
 export default function AppLayout() {
   const token = useAuthStore(s => s.token);
   const requiresAgreement = useAuthStore(s => s.requiresAgreement);
+  const activeKey = useAuthStore(s => s.activeKey);
 
   // Re-sync the signed-in user (id, name, role, avatar…) from the server whenever
   // the app starts with a token. The iOS keychain keeps the token across a
@@ -40,7 +41,8 @@ export default function AppLayout() {
   if (!token) return <Redirect href="/login" />;
   if (requiresAgreement) return <Redirect href="/agreement" />;
   return (
-    <Stack screenOptions={{ headerStyle: { backgroundColor: t.card }, headerTintColor: t.text, headerTitleStyle: { fontWeight: '700' }, contentStyle: { backgroundColor: t.bg }, headerShadowVisible: false, headerBackButtonDisplayMode: 'minimal' }}>
+    // Keyed by account: switching remounts every screen, so nothing from the previous workspace stays on screen.
+    <Stack key={activeKey || 'none'} screenOptions={{ headerStyle: { backgroundColor: t.card }, headerTintColor: t.text, headerTitleStyle: { fontWeight: '700' }, contentStyle: { backgroundColor: t.bg }, headerShadowVisible: false, headerBackButtonDisplayMode: 'minimal' }}>
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       <Stack.Screen name="forum/[slug]" options={{ title: 'Post' }} />
       <Stack.Screen name="forum/create" options={{ title: 'New post', presentation: 'modal' }} />
@@ -67,6 +69,7 @@ export default function AppLayout() {
       <Stack.Screen name="share" options={{ title: 'Quick share', presentation: 'modal' }} />
       <Stack.Screen name="search" options={{ title: 'Search' }} />
       <Stack.Screen name="radio-settings" options={{ title: 'Radio settings', presentation: 'modal' }} />
+      <Stack.Screen name="accounts" options={{ title: 'Accounts', presentation: 'modal' }} />
       <Stack.Screen name="call-ai" options={{ title: 'Call', presentation: 'fullScreenModal', gestureEnabled: false }} />
     </Stack>
   );

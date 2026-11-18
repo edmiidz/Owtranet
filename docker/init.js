@@ -2,16 +2,17 @@
 /**
  * First-run setup for the Docker image (runs before server.js on every start).
  *
- * Idempotent:
- *   1. Waits for MySQL.
- *   2. Empty database (no `users` table) → loads db/schema.sql + db/seed.sql.
- *   3. No admin yet and ADMIN_EMAIL + ADMIN_PASSWORD set → creates the admin
- *      and loads the placeholder team agreement (db/seed_team_agreement.sql).
+ * Serialize startup per database. First-run DDL can be replayed after an
+ * interruption. Base seed data, the first admin, and the agreement are
+ * committed together when the database is being bootstrapped.
  *
- * An existing database is never modified beyond step 3. Schema upgrades still
- * go through server/migrations/ as described in the README.
+ * Databases that already have members keep their existing schema and data.
+ * Schema upgrades still go through server/migrations/ as described in the
+ * README; on an existing database this prints which migration files are still
+ * missing.
  */
 const fs = require('fs');
+const { findMissing, formatReport } = require('../server/lib/schemaCheck');
 const path = require('path');
 const mysql = require('mysql2/promise');
 const bcrypt = require('bcryptjs');
@@ -39,44 +40,110 @@ async function connect() {
   }
 }
 
+async function needsBootstrap(db) {
+  const [tables] = await db.query(`
+    SELECT table_name AS name FROM information_schema.tables
+    WHERE table_schema = DATABASE() AND table_name IN ('users', 'docker_bootstrap')
+  `);
+  if (tables.some(({ name }) => name === 'docker_bootstrap')) {
+    const [[{ completed }]] = await db.query('SELECT EXISTS (SELECT 1 FROM docker_bootstrap WHERE id = 1) AS completed');
+    return !completed;
+  }
+  if (!tables.some(({ name }) => name === 'users')) return true;
+
+  // An old interrupted start may have inserted only the reserved System row.
+  // Leave populated databases to the normal migration path.
+  const [[{ hasMembers }]] = await db.query(`
+    SELECT EXISTS (
+      SELECT 1 FROM users WHERE id <> 1 OR NOT (role <=> 'system')
+    ) AS hasMembers
+  `);
+  return !hasMembers;
+}
+
+async function loadSchema(db) {
+  // The bootstrap marker exists before the first implicit DDL commit. Its row
+  // is inserted only after the schema and seed are both complete.
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS docker_bootstrap (
+      id TINYINT NOT NULL PRIMARY KEY
+    ) ENGINE=InnoDB
+  `);
+  // The dump includes a temporary view before its final definition.
+  const schema = sql('schema.sql')
+    .replace(/^CREATE TABLE `/gm, 'CREATE TABLE IF NOT EXISTS `')
+    .replace(/^\/\*!50001 CREATE VIEW `/gm, '/*!50001 CREATE OR REPLACE VIEW `');
+  await db.query(schema);
+}
+
+async function createFirstAdmin(db) {
+  const [[{ n: admins }]] = await db.query("SELECT COUNT(*) AS n FROM users WHERE role = 'admin'");
+  if (admins) return;
+
+  const email = (process.env.ADMIN_EMAIL || '').trim().toLowerCase();
+  const password = process.env.ADMIN_PASSWORD || '';
+  if (!email || !password) {
+    console.log('[init] no admin account yet: set ADMIN_EMAIL and ADMIN_PASSWORD in .env and restart');
+    return;
+  }
+  if (password.length < 8) throw new Error('ADMIN_PASSWORD must be at least 8 characters');
+
+  const name = (process.env.ADMIN_NAME || 'Admin').trim();
+  const username = email.split('@')[0];
+  const hash = await bcrypt.hash(password, 10);
+  await db.execute(
+    "INSERT INTO users (email, password, name, role, intranet_username) VALUES (?, ?, ?, 'admin', ?)",
+    [email, hash, name, username]
+  );
+
+  const [[{ n: agreements }]] = await db.query(
+    "SELECT COUNT(*) AS n FROM agreement_versions WHERE agreement_type = 'team'"
+  );
+  if (!agreements) await db.query(sql('seed_team_agreement.sql'));
+  return { email, createdAgreement: !agreements };
+}
+
 (async () => {
   const db = await connect();
   try {
-    const [[{ n: hasUsers }]] = await db.query(
-      "SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'users'"
+    // MySQL releases this connection-owned advisory lock when db.end() runs
+    // or an interrupted initializer disconnects.
+    const [[{ acquired }]] = await db.query(
+      "SELECT GET_LOCK(SHA2(CONCAT('owtranet:docker:init:', LOWER(DATABASE())), 256), 60) AS acquired"
     );
-    if (!hasUsers) {
-      console.log('[init] empty database: loading schema and seed data');
-      await db.query(sql('schema.sql'));
-      await db.query(sql('seed.sql'));
+    if (!acquired) throw new Error('could not lock database for Owtranet initialization');
+
+    const bootstrap = await needsBootstrap(db);
+    if (bootstrap) {
+      console.log('[init] loading first-run schema and seed data');
+      await loadSchema(db);
+    } else {
+      // Existing database: say which migrations an upgrade still needs.
+      const report = formatReport(await findMissing(db), {
+        applyHint: `docker compose exec -T db sh -c 'mysql -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" "$MYSQL_DATABASE"' < FILE`,
+      });
+      if (report) console.error(`[init] ⚠️  SCHEMA OUT OF DATE — run these from the repo directory on the host:\n${report}`);
     }
 
-    const [[{ n: admins }]] = await db.query("SELECT COUNT(*) AS n FROM users WHERE role = 'admin'");
-    if (admins) return;
-
-    const email = (process.env.ADMIN_EMAIL || '').trim().toLowerCase();
-    const password = process.env.ADMIN_PASSWORD || '';
-    if (!email || !password) {
-      console.log('[init] no admin account yet: set ADMIN_EMAIL and ADMIN_PASSWORD in .env and restart');
-      return;
+    await db.beginTransaction();
+    let admin;
+    try {
+      if (bootstrap) {
+        await db.query(sql('seed.sql'));
+        const [[{ systemUser }]] = await db.query(
+          "SELECT EXISTS (SELECT 1 FROM users WHERE id = 1 AND role = 'system') AS systemUser"
+        );
+        if (!systemUser) throw new Error('reserved System account is missing at user id 1');
+      }
+      admin = await createFirstAdmin(db);
+      if (bootstrap) await db.query('INSERT INTO docker_bootstrap (id) VALUES (1)');
+      await db.commit();
+    } catch (err) {
+      await db.rollback();
+      throw err;
     }
-    if (password.length < 8) {
-      throw new Error('ADMIN_PASSWORD must be at least 8 characters');
-    }
-    const name = (process.env.ADMIN_NAME || 'Admin').trim();
-    const username = email.split('@')[0];
-    const hash = await bcrypt.hash(password, 10);
-    await db.execute(
-      "INSERT INTO users (email, password, name, role, intranet_username) VALUES (?, ?, ?, 'admin', ?)",
-      [email, hash, name, username]
-    );
-    console.log(`[init] created admin ${email}`);
-
-    const [[{ n: agreements }]] = await db.query(
-      "SELECT COUNT(*) AS n FROM agreement_versions WHERE agreement_type = 'team'"
-    );
-    if (!agreements) {
-      await db.query(sql('seed_team_agreement.sql'));
+    if (admin) console.log(`[init] created admin ${admin.email}`);
+    if (admin?.createdAgreement) {
       console.log('[init] loaded placeholder team agreement (replace it in Admin → Agreements)');
     }
   } finally {

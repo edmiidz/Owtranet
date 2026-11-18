@@ -75,7 +75,8 @@ server/scripts/           admin scripts (seed AI agents, sync voice-agent tools,
 client/                   React web app (Vite)
 mobile/                   Expo app
 db/                       schema.sql + seed files
-scripts/                  create-admin, smoke test, exchange rates, mail aliases
+scripts/                  create-admin, schema check, smoke test, exchange rates, mail aliases
+test/                     unit tests (npm test) + database install/upgrade test
 docs/                     API, mobile and e-mail design docs
 ```
 
@@ -106,6 +107,12 @@ Open http://localhost:3006 and sign in as the admin. On first start the app
 container loads the schema, creates the admin and seeds a placeholder team
 agreement. Data lives in the `db-data` and `uploads` Docker volumes.
 
+If the first start fails, fix the cause and run `docker compose up -d` again
+with the same volumes. The initializer resumes first-run schema and seeding.
+Existing admins and agreements are preserved. If an older installation already
+has an admin and lacks an agreement, an admin can configure it in **Admin →
+Agreements**.
+
 - **Optional features**: add any setting from [`.env.example`](.env.example)
   (for example `ANTHROPIC_API_KEY` for AI agents, `SES_SMTP_*` for e-mail) to
   the same `.env` and run `docker compose up -d` again.
@@ -113,8 +120,17 @@ agreement. Data lives in the `db-data` and `uploads` Docker volumes.
   (and `OWTRANET_PORT` for the host port).
 - **Public server**: put it behind TLS (nginx, Caddy, Traefik), set `BASE_URL`
   to the `https://` address and `CSP_UPGRADE_INSECURE_REQUESTS=true`.
-- **Upgrading**: `git pull && docker compose up -d --build`, after applying any
-  new `server/migrations/*.sql` (see [Upgrading](#upgrading-an-existing-instance)).
+- **Upgrading**: pull, rebuild, then apply any migrations the app reports:
+  ```bash
+  git pull
+  docker compose up -d --build
+  docker compose logs app | grep -A12 'SCHEMA OUT OF DATE'   # nothing = up to date
+  # for each file it lists:
+  docker compose exec -T db sh -c 'mysql -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" "$MYSQL_DATABASE"' \
+    < server/migrations/<file>.sql
+  docker compose exec -T app node scripts/check-schema.js   # must print ✅
+  ```
+  See also [Upgrading](#upgrading-an-existing-instance) and [CHANGELOG.md](CHANGELOG.md).
 
 The Docker setup runs the main app only. The optional background workers in
 `ecosystem.config.js` (radio summaries, push, scheduled mail, receipt e-mail)
@@ -170,8 +186,10 @@ servers run out of memory building Vite.
 4. **nginx + TLS**: copy `nginx.conf` to `/etc/nginx/sites-available/`, change
    `server_name`, enable it, and run `certbot --nginx -d intranet.example.com`.
 
-After each restart, `deploy.sh` runs `scripts/smoke-test.sh`, which checks the
-main read endpoints and fails the deploy on any non-200 response.
+Before restarting, `deploy.sh` runs `scripts/check-schema.js` on the server and
+stops if the database lacks a table or column the new code needs; the old
+version keeps running. After the restart it runs `scripts/smoke-test.sh`, which
+checks the main read endpoints and fails the deploy on any non-200 response.
 
 ## Configuration
 
@@ -182,6 +200,11 @@ for the full list. The main groups are:
   are used across the UI (via the public `GET /api/config/branding`), e-mails
   and AI prompts.
 - **Outbound mail**: `SES_SMTP_*` works with any SMTP relay.
+- **Notification e-mails**: mentions, comments on your posts and direct
+  messages are e-mailed only while a member is away (no web or mobile activity
+  for `EMAIL_NOTIFY_AWAY_MINUTES`, default 30). Each member can change this
+  under *Email Notifications* on their profile: always, only when away, only
+  when away and signed out of the mobile app, or never.
 - **Self-hosted mail**: `MAIL_*` and `DEFAULT_EMAIL_PROVIDER`. See
   [docs/EMAIL_SYSTEM_ARCHITECTURE.md](docs/EMAIL_SYSTEM_ARCHITECTURE.md). Skip
   it and set `DEFAULT_EMAIL_PROVIDER=google_workspace` or `microsoft_365` if
@@ -195,10 +218,43 @@ for the full list. The main groups are:
 
 ## Upgrading an existing instance
 
-`db/schema.sql` is the full current schema. When a change needs a schema
-update, the PR adds an idempotent migration under `server/migrations/` and
-updates `db/schema.sql` too. Apply new migrations to each instance database
-before deploying the code that needs them.
+These steps work from any earlier version, including instances that skipped
+releases. [CHANGELOG.md](CHANGELOG.md) says what each release changes.
+
+1. **Get the code**: `git pull` (or merge `upstream/main` into your fork).
+2. **Find the migrations your database needs.** In the app directory on the
+   server, which has the instance's `.env`:
+   ```bash
+   node scripts/check-schema.js
+   ```
+   It compares the database with `db/schema.sql` and prints the
+   `server/migrations/` file that adds each missing table or column. It ignores
+   anything extra you have added locally.
+3. **Apply each listed file**, in the order shown, then re-run the check until
+   it prints ✅:
+   ```bash
+   mysql -h <db host> -u <user> -p <database> < server/migrations/<file>.sql
+   ```
+   Migrations are written to be safe to re-run. Back up first if you are
+   several releases behind (`mysqldump <database> > backup.sql`).
+4. **Deploy**: `./deploy.sh` (it repeats the check before restarting), or
+   rebuild/restart however you run the app. Run `npm install --omit=dev` on the
+   server when `package.json` dependencies changed.
+5. **Verify**: `deploy.sh` runs the smoke test. Otherwise open the site, sign
+   in, and check the server log has no `SCHEMA OUT OF DATE` warning.
+
+When a change needs a schema update, its PR adds an idempotent migration under
+`server/migrations/` and updates `db/schema.sql` too.
+
+### Testing
+
+```bash
+npm test                                   # unit tests, no database needed
+DB_PASSWORD=… test/db/upgrade-test.sh      # fresh install + upgrade from 1.0.0 on a MySQL server
+```
+
+Both run in GitHub Actions on every push and pull request, along with a Docker
+Compose install.
 
 ## Contributing
 

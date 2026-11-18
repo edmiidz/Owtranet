@@ -15,7 +15,10 @@
 #   1. Refuses to deploy from a clone that is behind origin (it would roll back others' work)
 #   2. Builds client/dist locally (small servers can run out of memory building Vite)
 #   3. rsyncs client/dist and the backend paths below, then verifies server.js landed
-#   4. Syntax-checks, restarts PM2, and runs scripts/smoke-test.sh
+#   4. Checks the server's database has every table/column the new code needs
+#      (scripts/check-schema.js) and stops BEFORE restarting if not, so the old
+#      version keeps running until you apply the named migration(s)
+#   5. Syntax-checks, restarts PM2, and runs scripts/smoke-test.sh
 #
 # It never touches .env, uploads/, logs/, node_modules/, server/data/ or
 # ecosystem.config.js on the server. Run `npm install --omit=dev` on the server
@@ -26,6 +29,7 @@
 #   ./deploy.sh --no-build   # deploy whatever is already in client/dist
 #   ./deploy.sh --client     # frontend only (no backend, no restart)
 #   ./deploy.sh --allow-stale
+#   ./deploy.sh --skip-schema-check   # restart even if the schema check fails
 
 set -euo pipefail
 
@@ -50,18 +54,20 @@ SERVER_PATHS=(
   "api/"
   "scripts/"
   "server/"
+  "db/"
   "mcp-webmail/"
 )
 
 SSH="ssh -i $DEPLOY_KEY -o ConnectTimeout=20"
 TARGET="$DEPLOY_USER@$DEPLOY_HOST"
 
-DO_BUILD=1; DO_SERVER=1; DO_RESTART=1; ALLOW_STALE=0
+DO_BUILD=1; DO_SERVER=1; DO_RESTART=1; ALLOW_STALE=0; SCHEMA_CHECK=1
 for arg in "$@"; do
   case "$arg" in
     --no-build) DO_BUILD=0 ;;
     --client)   DO_SERVER=0; DO_RESTART=0 ;;
     --allow-stale) ALLOW_STALE=1 ;;
+    --skip-schema-check) SCHEMA_CHECK=0 ;;
     *) echo "Unknown arg: $arg"; exit 2 ;;
   esac
 done
@@ -104,6 +110,16 @@ if [ "$DO_SERVER" = "1" ]; then
   if [ "$LOCAL_SUM" != "$REMOTE_SUM" ]; then
     echo "❌ server.js on the server does not match this clone — backend rsync failed."
     exit 5
+  fi
+fi
+
+if [ "$DO_RESTART" = "1" ] && [ "$SCHEMA_CHECK" = "1" ]; then
+  echo "🗄️  Schema check (db/schema.sql vs the server's database)..."
+  if ! $SSH "$TARGET" "cd $DEPLOY_PATH && node scripts/check-schema.js"; then
+    echo "❌ Not restarting: the new code needs schema changes this database doesn't have."
+    echo "   The previous version is still running. Apply the migration(s) listed above on"
+    echo "   the server, then re-run ./deploy.sh (or --skip-schema-check to restart anyway)."
+    exit 6
   fi
 fi
 

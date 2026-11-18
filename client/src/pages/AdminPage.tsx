@@ -25,6 +25,7 @@ import {
 import { useAuthStore } from '../stores/authStore';
 import { useBrandingStore } from '../stores/brandingStore';
 import { invitesApi, emailRequestsApi, usersApi, quicklinksApi, agreementsApi } from '../utils/api';
+import { externalProviderName } from '../utils/emailProvider';
 import type { User, EmailRequest, Quicklink } from '../types';
 import QuicklinkForm from '../components/QuicklinkForm';
 
@@ -67,6 +68,8 @@ const AdminPage: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string>('');
   const [success, setSuccess] = useState<string>('');
+  // After approving a request on an external mail provider: the mailbox the admin still has to create there
+  const [externalMailboxTodo, setExternalMailboxTodo] = useState<{ email: string; providerName: string; consoleUrl: string } | null>(null);
   const [copiedCode, setCopiedCode] = useState<string>('');
   const [requestingAgreement, setRequestingAgreement] = useState<number | null>(null);
 
@@ -287,8 +290,17 @@ const AdminPage: React.FC = () => {
 
   const approveEmailRequest = async (requestId: number, status: 'approved' | 'rejected', reason?: string) => {
     try {
-      await emailRequestsApi.updateEmailRequest(requestId, { status, rejection_reason: reason });
+      setError('');
+      setExternalMailboxTodo(null);
+      const result = await emailRequestsApi.updateEmailRequest(requestId, { status, rejection_reason: reason });
       setSuccess(`Email request ${status} successfully`);
+      if (result?.external_provider_name && result.admin_console_url && result.requested_email) {
+        setExternalMailboxTodo({
+          email: result.requested_email,
+          providerName: result.external_provider_name,
+          consoleUrl: result.admin_console_url
+        });
+      }
       loadData();
     } catch (err: any) {
       setError(err.response?.data?.error || 'Failed to update email request');
@@ -1473,7 +1485,21 @@ const AdminPage: React.FC = () => {
         {activeTab === 'emailrequests' && (
           <div className="card p-6">
             <h2 className="text-xl font-semibold text-gray-900 mb-4">Email Requests</h2>
-            
+
+            {externalMailboxTodo && (
+              <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-900">
+                <p className="font-medium mb-1">One more step: create the mailbox in {externalMailboxTodo.providerName}</p>
+                <p>
+                  <strong>{externalMailboxTodo.email}</strong> is now the member's work address on the intranet. Create the
+                  user in the{' '}
+                  <a href={externalMailboxTodo.consoleUrl} target="_blank" rel="noopener noreferrer" className="underline">
+                    {externalMailboxTodo.providerName} admin console
+                  </a>{' '}
+                  and send them their sign-in details at their personal address.
+                </p>
+              </div>
+            )}
+
             {isLoading ? (
               <div className="space-y-4">
                 {[...Array(3)].map((_, i) => (
@@ -1500,8 +1526,16 @@ const AdminPage: React.FC = () => {
                           `}>
                             {request.status?.charAt(0).toUpperCase() + request.status?.slice(1)}
                           </span>
+                          {externalProviderName(request.provider) && (
+                            <span
+                              className="px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800"
+                              title="Approving records the address; the mailbox is created in this provider's admin console"
+                            >
+                              {externalProviderName(request.provider)}
+                            </span>
+                          )}
                         </div>
-                        
+
                         <p className="text-sm text-gray-600 mb-2">
                           <strong>Requested by:</strong> {request.requester_name} ({request.requester_email})
                         </p>

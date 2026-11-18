@@ -989,7 +989,7 @@ CREATE TABLE `scheduled_emails` (
   `html_body` mediumtext,
   `attachments` json DEFAULT NULL COMMENT '[{filename, path, contentType, size}] as saved by multer',
   `scheduled_at` datetime NOT NULL COMMENT 'UTC',
-  `status` enum('scheduled','sending','sent','failed','cancelled') NOT NULL DEFAULT 'scheduled',
+  `status` enum('scheduled','sending','sent','failed','cancelled','delivery_unknown') NOT NULL DEFAULT 'scheduled',
   `attempts` tinyint unsigned NOT NULL DEFAULT '0',
   `last_error` text,
   `message_id` varchar(255) DEFAULT NULL,
@@ -1073,6 +1073,19 @@ CREATE TABLE `sent_emails` (
   KEY `idx_sent_at` (`sent_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
+
+-- Authenticated sends parsed from the Postfix mail log (server/cron/ingestMailLog.js)
+CREATE TABLE IF NOT EXISTS `smtp_sent_log` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `queue_id` varchar(32) NOT NULL,
+  `sender` varchar(255) NOT NULL,
+  `sent_at` datetime NOT NULL,
+  `recipient_count` int NOT NULL DEFAULT '0',
+  `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uniq_smtp_sent_queue` (`queue_id`, `sent_at`),
+  KEY `idx_smtp_sent_sender_time` (`sender`, `sent_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `server_email_accounts` (
@@ -1300,6 +1313,7 @@ CREATE TABLE `users` (
   `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `company_email` varchar(255) DEFAULT NULL,
   `email_notification_preference` enum('personal','company','both') DEFAULT 'company',
+  `email_notification_mode` enum('always','when_away','when_signed_out','never') NOT NULL DEFAULT 'when_away' COMMENT 'When to email mention/comment/DM notifications; see server/lib/emailNotifications.js',
   `email_provider` enum('self_hosted','microsoft_365','google_workspace') DEFAULT NULL COMMENT 'Mail + calendar provider; NULL = instance default (DEFAULT_EMAIL_PROVIDER)',
   `company_email_created_at` datetime DEFAULT NULL,
   `company_email_last_reset` datetime DEFAULT NULL,

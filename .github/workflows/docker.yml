@@ -19,8 +19,19 @@ jobs:
           sed -i "s/^ADMIN_EMAIL=.*/ADMIN_EMAIL=ci@example.com/" .env
           sed -i "s/^ADMIN_PASSWORD=.*/ADMIN_PASSWORD=ci-password-123/" .env
 
-      - name: Build and start
-        run: docker compose up -d --build
+      - name: Build and recover from an interrupted first setup
+        run: |
+          docker compose up -d --wait db
+          docker compose build app
+          if docker compose run --rm --no-deps -e ADMIN_PASSWORD=short app node docker/init.js > bootstrap.log 2>&1; then
+            echo "Expected bootstrap to fail validation"
+            exit 1
+          fi
+          if ! grep -q 'ADMIN_PASSWORD must be at least 8 characters' bootstrap.log; then
+            cat bootstrap.log
+            exit 1
+          fi
+          docker compose up -d
 
       - name: Wait for the app
         run: |
@@ -37,6 +48,22 @@ jobs:
           curl -fsS -X POST http://localhost:3006/api/auth/login \
             -H 'Content-Type: application/json' -H 'Origin: http://localhost:3006' \
             -d '{"email":"ci@example.com","password":"ci-password-123"}' | grep -q '"token"'
+
+      - name: README upgrade command applies a migration
+        # Same command as the README's "Upgrading" step; must exit 0.
+        run: |
+          docker compose exec -T db sh -c 'mysql -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" "$MYSQL_DATABASE"' \
+            < server/migrations/add_post_editors.sql
+
+      - name: Fresh Docker install matches db/schema.sql
+        run: docker compose exec -T app node scripts/check-schema.js
+
+      - name: New migrations are idempotent on a live install
+        run: |
+          for run in 1 2; do
+            docker compose exec -T db sh -c 'mysql -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" "$MYSQL_DATABASE"' \
+              < server/migrations/add_email_notification_mode.sql
+          done
 
       - name: Logs on failure
         if: failure()

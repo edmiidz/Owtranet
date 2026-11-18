@@ -41,6 +41,8 @@ ENDPOINTS=(
   "/api/search?q=smoke"
   "/api/users/search?q=a"
   "/api/quicklinks"
+  "/api/config/branding"
+  "/api/users/id:__ADMIN_ID__"   # profile page; 500s if a users-table migration is missing
 )
 # Deliberately NOT listed: /api/agreements/status (404 is a legitimate state when
 # no agreement version is active). Only put endpoints here that must be 200 on
@@ -77,8 +79,10 @@ for i in $(seq 1 15); do
 done
 
 FAIL=0
-echo "🧪 Smoke test $(basename "$APP") :$PORT as admin user $ADMIN_ID"
+VERSION=$(node -p 'require("./package.json").version' 2>/dev/null || echo "?")
+echo "🧪 Smoke test $(basename "$APP") v$VERSION :$PORT as admin user $ADMIN_ID"
 for ep in $ENDPOINT_LIST; do
+  ep="${ep//__ADMIN_ID__/$ADMIN_ID}"
   code=$(curl -s -o /tmp/smoke_body -w '%{http_code}' --max-time 15 \
     "http://localhost:$PORT$ep" -H "Authorization: Bearer $TOKEN")
   if [ "$code" = "200" ]; then
