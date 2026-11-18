@@ -83,8 +83,10 @@ const AgreementPage: React.FC = () => {
   }, [assignment, agreement, isAssignmentMode]);
 
   const quizQuestion = version?.quiz_question || null;
-  // The legacy team quiz uses fixed before/after radio options
-  const useLegacyQuizOptions = !isAssignmentMode;
+  // The legacy team quiz (v1–v5) uses fixed before/after radio options; any other
+  // team quiz (v6.2+) is free text, checked by the server like assignment quizzes.
+  const legacyAnswer = (agreement?.quiz_correct_answer || '').trim().toLowerCase();
+  const useLegacyQuizOptions = !isAssignmentMode && (legacyAnswer === 'before' || legacyAnswer === 'after');
 
   useEffect(() => {
     const load = async () => {
@@ -150,7 +152,7 @@ const AgreementPage: React.FC = () => {
 
   const isFormValid = () => {
     const allConfirmed = confirmations.every(c => checked[c.key]);
-    const quizOk = !quizQuestion || (useLegacyQuizOptions ? quizAnswer.toLowerCase() === 'after' : quizAnswer.trim().length > 0);
+    const quizOk = !quizQuestion || (useLegacyQuizOptions ? quizAnswer.toLowerCase() === legacyAnswer : quizAnswer.trim().length > 0);
     const signatureOk = digitalSignature.toLowerCase() === 'agree';
     const basicOk = fullName.trim() && email.trim();
     const payrollOk = Object.keys(payrollErrors).length === 0;
