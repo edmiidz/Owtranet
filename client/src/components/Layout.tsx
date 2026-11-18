@@ -208,11 +208,11 @@ const Layout: React.FC = () => {
     { name: 'Search', href: '/search', icon: Search },
   ];
 
-  // Email Request + Webmail exist only for the self-hosted mail provider
+  // Webmail exists only for the self-hosted mail provider; Email Request works for every provider
   const selfHostedMail = usesSelfHostedMail(user, defaultEmailProvider);
 
-  // Hide Email Request for external-provider members and once the user has a company mailbox
-  const navigation = baseNavigation.filter(item => !(item.name === 'Email Request' && (!selfHostedMail || user?.company_email)));
+  // Hide Email Request once the user has a company address
+  const navigation = baseNavigation.filter(item => !(item.name === 'Email Request' && user?.company_email));
 
   // Add webmail for self-hosted members with a company mailbox
   if (selfHostedMail && user?.company_email) {
