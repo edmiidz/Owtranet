@@ -5,6 +5,16 @@ upgrade needs. To upgrade any instance from any earlier version, follow
 [Upgrading an existing instance](README.md#upgrading-an-existing-instance):
 `node scripts/check-schema.js` names every migration your database still needs.
 
+## Unreleased
+
+### Fixes
+
+- **Mobile: tapping a comment or mention notification now opens the post**
+  (#35). "New comment on your post" and mention notifications did nothing when
+  tapped in the list, and opened the Notifications screen when tapped as a push.
+  Both now open the post, group channel or task they refer to. Ships with the
+  next app build.
+
 ## 1.1.1 — 2026-11-18
 
 ### Upgrade steps (from 1.1.0)
