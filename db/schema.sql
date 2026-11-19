@@ -20,6 +20,29 @@
 /*!40111 SET @OLD_SQL_NOTES=@@SQL_NOTES, SQL_NOTES=0 */;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `access_log` (
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
+  `occurred_at` datetime(3) NOT NULL DEFAULT (utc_timestamp(3)) COMMENT 'UTC',
+  `user_id` int DEFAULT NULL,
+  `actor_type` enum('user','api_token','ai_agent','system','anonymous') NOT NULL DEFAULT 'user',
+  `api_token_id` int DEFAULT NULL,
+  `event` enum('read','search') NOT NULL,
+  `resource_type` varchar(50) NOT NULL COMMENT 'post, deliverable, profile, conversation, email… or the search scope',
+  `resource_id` varchar(255) DEFAULT NULL,
+  `query` varchar(500) DEFAULT NULL COMMENT 'search text',
+  `filters` json DEFAULT NULL COMMENT 'other search parameters',
+  `route` varchar(255) DEFAULT NULL,
+  `ip_address` varchar(45) DEFAULT NULL,
+  `user_agent` varchar(255) DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_access_user` (`user_id`,`occurred_at`),
+  KEY `idx_access_resource` (`resource_type`,`resource_id`,`occurred_at`),
+  KEY `idx_access_event` (`event`,`occurred_at`),
+  KEY `idx_access_occurred` (`occurred_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Read and search events; rolling retention, archived by server/cron/archiveAuditLogs.js';
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `activity_log` (
   `id` int NOT NULL AUTO_INCREMENT,
   `user_id` int DEFAULT NULL,
@@ -156,6 +179,31 @@ CREATE TABLE `api_tokens` (
   KEY `idx_created_by` (`created_by`),
   CONSTRAINT `api_tokens_ibfk_1` FOREIGN KEY (`created_by`) REFERENCES `users` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `audit_log` (
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
+  `occurred_at` datetime(3) NOT NULL DEFAULT (utc_timestamp(3)) COMMENT 'UTC',
+  `actor_user_id` int DEFAULT NULL COMMENT 'users.id of who did it (NULL = system / anonymous)',
+  `actor_name` varchar(255) DEFAULT NULL COMMENT 'snapshot, survives user deletion',
+  `actor_type` enum('user','api_token','ai_agent','system') NOT NULL DEFAULT 'user',
+  `api_token_id` int DEFAULT NULL COMMENT 'api_tokens.id when the change came through /api/v1',
+  `action` varchar(64) NOT NULL COMMENT 'dotted verb, e.g. post.update, role.change, agreement.sign',
+  `entity_type` varchar(50) DEFAULT NULL,
+  `entity_id` varchar(64) DEFAULT NULL,
+  `changes` json DEFAULT NULL COMMENT '{field: {old, new}} — sensitive fields are recorded as changed, never valued',
+  `reason` varchar(500) DEFAULT NULL,
+  `metadata` json DEFAULT NULL,
+  `route` varchar(255) DEFAULT NULL COMMENT 'METHOD /express/route/:pattern',
+  `ip_address` varchar(45) DEFAULT NULL,
+  `user_agent` varchar(255) DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_audit_entity` (`entity_type`,`entity_id`,`occurred_at`),
+  KEY `idx_audit_actor` (`actor_user_id`,`occurred_at`),
+  KEY `idx_audit_action` (`action`,`occurred_at`),
+  KEY `idx_audit_occurred` (`occurred_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Append-only change trail (role changes, content edits, e-sign)';
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;

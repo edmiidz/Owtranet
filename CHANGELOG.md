@@ -5,6 +5,37 @@ upgrade needs. To upgrade any instance from any earlier version, follow
 [Upgrading an existing instance](README.md#upgrading-an-existing-instance):
 `node scripts/check-schema.js` names every migration your database still needs.
 
+## Unreleased
+
+### Upgrade steps
+
+Apply `server/migrations/add_audit_trail.sql` **before** deploying the new
+server: it creates `audit_log` and `access_log` and copies your existing
+`activity_log` history into `audit_log`. `node scripts/check-schema.js` names it
+(`./deploy.sh` runs that check for you). Safe to re-run.
+
+### Added
+
+- **Audit trail** (#42, #41). Two new tables, documented in `docs/AUDIT_TRAIL.md`:
+  - `audit_log` records every change, kept indefinitely: who (a name snapshot that
+    survives user deletion; person, API token, AI agent or system), what record,
+    exact old/new values for posts, comments, deliverables, profiles, hourly
+    rates, user deletion, agreements and **every role change**, plus the reason,
+    route, IP and user agent. Every other successful write is still recorded,
+    with field names but never values. Passwords and other sensitive fields are
+    only ever recorded as "changed". Deletes keep a snapshot.
+  - `access_log` records reads of tracked records and every search, batched and
+    de-duplicated (type-ahead searches collapse into one row). It keeps 180 days;
+    `server/cron/archiveAuditLogs.js` moves older rows into monthly `.jsonl.gz`
+    files (dry run by default, optional S3 copy).
+  - Admin API: `GET /api/admin/audit` and `GET /api/admin/access-log` with filters
+    and paging. `GET /api/admin/activity` now returns `audit_log` rows.
+
+### Fixes
+
+- Changing the role of a user that doesn't exist now returns 404 instead of
+  silently succeeding.
+
 ## 1.1.1 — 2026-11-18
 
 ### Upgrade steps (from 1.1.0)
