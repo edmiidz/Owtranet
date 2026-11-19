@@ -38,12 +38,13 @@ function speak(content: string) {
  * Native action sheet on iOS, an Alert with buttons on Android. "Speak" uses the
  * device's own TTS engine (expo-speech), the same one the radio uses.
  */
-export function showMessageActions(opts: { content: string; onReply?: () => void; onDelete?: () => void }) {
+export function showMessageActions(opts: { content: string; onReply?: () => void; onEdit?: () => void; onDelete?: () => void }) {
   const content = (opts.content || '').trim();
   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
 
   const actions: Array<{ label: string; run: () => void; destructive?: boolean }> = [];
   if (opts.onReply) actions.push({ label: 'Reply', run: opts.onReply });
+  if (opts.onEdit && content) actions.push({ label: 'Edit', run: opts.onEdit });
   if (content) {
     actions.push({ label: 'Copy', run: () => { Clipboard.setStringAsync(content).catch(() => {}); } });
     actions.push({ label: 'Speak', run: () => speak(content) });

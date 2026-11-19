@@ -374,6 +374,15 @@ export const groupChatApi = {
     const response = await api.post(`/group-chat/${groupId}/messages/${messageId}/like`);
     return response.data;
   },
+
+  editMessage: async (groupId: number, messageId: number, content: string): Promise<{
+    success: boolean;
+    unchanged?: boolean;
+    data?: { id: number; content: string; content_html: string; is_edited: boolean; edited_at: string; updated_at: string };
+  }> => {
+    const response = await api.put(`/group-chat/${groupId}/messages/${messageId}`, { content });
+    return response.data;
+  },
 };
 
 // Search API
@@ -487,6 +496,15 @@ export const messagesApi = {
 
   getUnreadCount: async (): Promise<{ unread_count: number }> => {
     const response = await api.get('/messages/unread-count');
+    return response.data;
+  },
+
+  editMessage: async (messageId: number, content: string): Promise<{
+    success: boolean;
+    unchanged?: boolean;
+    data?: { id: number; content: string; content_html: string; edited_at: string };
+  }> => {
+    const response = await api.put(`/messages/${messageId}`, { content });
     return response.data;
   },
 };
