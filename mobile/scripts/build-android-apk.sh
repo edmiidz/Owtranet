@@ -115,7 +115,8 @@ if [[ -n "$WORKERS" ]]; then
 fi
 ( cd android && ./gradlew "${GRADLE_ARGS[@]}" )
 
-VERSION=$(node -p "require('./app.json').expo.version"); CODE=$(node -p "require('./app.json').expo.android.versionCode")
+# String(), not a bare number: node colors numbers when FORCE_COLOR is set, which lands in the filename.
+VERSION=$(node -e "console.log(String(require('./app.json').expo.version))"); CODE=$(node -e "console.log(String(require('./app.json').expo.android.versionCode))")
 mkdir -p dist; OUT="dist/intranet-${VERSION}-${CODE}.${EXT}"; cp $OUT_GLOB "$OUT"
 
 # Verify what actually signed it — never trust the patch silently.

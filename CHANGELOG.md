@@ -5,6 +5,25 @@ upgrade needs. To upgrade any instance from any earlier version, follow
 [Upgrading an existing instance](README.md#upgrading-an-existing-instance):
 `node scripts/check-schema.js` names every migration your database still needs.
 
+## Unreleased
+
+### Fixes
+
+- **Android: the release build compiles again, and a fresh `npm install` in
+  `mobile/` works** (#43). `@livekit/react-native-webrtc` 144.2.0 broke the
+  Android compile while iOS kept building, and `@livekit/react-native-expo-plugin`
+  1.2.0 failed npm's peer-dependency check. Both are now pinned (see
+  `docs/MOBILE_APP.md`). If you build the app yourself, delete
+  `mobile/node_modules` and run `npm install` again before the next build.
+- `build-android-apk.sh` no longer puts colour codes in the APK filename when
+  `FORCE_COLOR` is set.
+
+### Added
+
+- `mobile/scripts/distribute-android.sh` sends an Android build to testers through
+  Firebase App Distribution. Configure it with `FIREBASE_ANDROID_APP_ID` (and
+  optionally `FIREBASE_TESTER_GROUP`).
+
 ## 1.1.1 — 2026-11-18
 
 ### Upgrade steps (from 1.1.0)

@@ -7,8 +7,8 @@
     "@elevenlabs/react-native": "^1.2.27",
     "@expo/vector-icons": "^15.0.2",
     "@livekit/react-native": "^2.12.0",
-    "@livekit/react-native-expo-plugin": "^1.0.2",
-    "@livekit/react-native-webrtc": "^144.1.2",
+    "@livekit/react-native-expo-plugin": "~1.1.0",
+    "@livekit/react-native-webrtc": "144.1.2",
     "@react-native-async-storage/async-storage": "^2.2.0",
     "axios": "^1.20.0",
     "expo": "~57.0.24",
@@ -49,6 +49,9 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web"
+  },
+  "overrides": {
+    "@livekit/react-native-webrtc": "144.1.2"
   },
   "private": true
 }
