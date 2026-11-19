@@ -274,11 +274,54 @@ postmap -q "sales@example.com" /etc/postfix/virtual_mailbox_maps
 postmap -q "sales@example.com" /etc/postfix/virtual
 ```
 
+## Inbound spam and phishing filtering (postscreen, optional)
+
+Out of the box, port 25 has no reputation filtering: only the HELO and sender-domain
+checks in `main.cf`. Phishing from IPs that are already on public blocklists is
+delivered straight to members' inboxes.
+
+`scripts/mail-postscreen.sh` puts Postfix **postscreen** in front of port 25. It scores
+every new client IP against DNS blocklists before `smtpd` sees it. The submission ports
+(587, 465) are not affected. Run it on the mail server with sudo:
+
+| Mode | Effect |
+|---|---|
+| `log` | install the config; DNSBL and pregreet results are **logged only** |
+| `enforce` | clients scoring ≥ 3 get `550` at RCPT; bots that talk before the banner are refused |
+| `report` | every IP that scored ≥ 3 in `/var/log/mail.log*`, with rDNS and envelope senders |
+| `status` / `rollback` | show the settings / restore the newest backup in `/etc/postfix/backup-postscreen/` |
+
+**Start with `log`**, leave it for a few hours to a day, and run `report`. Every row is
+something `enforce` would refuse, so check the rDNS and sender columns for anything
+legitimate before switching.
+
+**Scoring** (threshold 3, `POSTSCREEN_THRESHOLD` to change): Barracuda ×2, SpamCop ×1,
+the DNSWL allowlist ×−2, and Spamhaus ZEN ×3 **only if `SPAMHAUS_DQS_KEY` is set**. The
+weights come from replaying a week of real inbound IPs. SpamCop alone lists some Google
+and SendGrid outbound IPs, so no single soft list can reject mail by itself.
+
+**Safety:** every `log`/`enforce` run backs up `main.cf` and `master.cf` first. It rolls
+back automatically if `postfix check` fails or port 25 stops listening after the reload.
+It expects a stock Debian/Ubuntu `master.cf` and stops with a message rather than
+guessing if yours differs. Re-running is safe.
+
+**Gotchas**
+- Spamhaus refuses its public zone through large cloud resolvers (AWS answers
+  `127.255.255.254`), so it needs a DQS key. The **free** DQS tier is for non-commercial
+  use only. With a key, the script keeps it out of the `550` text sent to senders
+  (`postscreen_dnsbl_reply_map`).
+- `report` only sees what is still in `/var/log/mail.log*` (usually 4 weeks of rotation).
+- The first connection from a never-seen IP waits `postscreen_greet_wait` (6 s) before
+  `PASS NEW`; results are then cached in `/var/lib/postfix/postscreen_cache`.
+- This is reputation filtering only: no SPF/DKIM/DMARC checks on inbound mail and no
+  content scanner. The next layer, if needed, is rspamd (plus a Dovecot sieve rule to Junk).
+
 ## Related Files
 
 - Email request / approval and admin email endpoints: `server.js`
 - Webmail IMAP/SMTP: `emailUtils.js`
 - Alias sync: `scripts/sync-email-aliases.sh`, `api/sync-email-aliases.js`
+- Inbound DNSBL filtering: `scripts/mail-postscreen.sh` (postscreen on port 25)
 - Postfix: `/etc/postfix/virtual_mailbox_maps`, `/etc/postfix/virtual`
 - Dovecot: `/etc/dovecot/dovecot-sql-intranet.conf.ext`
 - Tables: `server_email_accounts`, `groups`, `group_members`, `users.company_email`
