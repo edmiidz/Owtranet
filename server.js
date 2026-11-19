@@ -7793,6 +7793,20 @@ app.get('/api/messages/conversations/:conversationId', authenticateToken, async 
       return res.status(403).json({ error: 'Access denied to this conversation' });
     }
     
+    // Optional paging: ?limit=N returns the newest N messages (still oldest
+    // first), ?before_id=X the N just older than message X. Without limit the
+    // whole history is returned, which older clients (mobile) rely on.
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 0, 0), 200);
+    const beforeId = parseInt(req.query.before_id, 10) || 0;
+    // Inlined, not bound: MySQL 8.4 rejects `LIMIT ?` in prepared statements.
+    const pageFilter = limit
+      ? `AND dm.id IN (SELECT id FROM (
+           SELECT id FROM direct_messages
+           WHERE conversation_id = ${parseInt(conversationId, 10)}${beforeId ? ` AND id < ${beforeId}` : ''}
+           ORDER BY id DESC LIMIT ${limit}
+         ) newest)`
+      : '';
+
     // Get messages
     const [messages] = await db.execute(`
       SELECT
@@ -7819,9 +7833,9 @@ app.get('/api/messages/conversations/:conversationId', authenticateToken, async 
       LEFT JOIN direct_messages rm ON rm.id = dm.reply_to_id
       LEFT JOIN users ru ON ru.id = rm.sender_id
       LEFT JOIN likes l ON l.likeable_type = 'message' AND l.likeable_id = dm.id
-      WHERE dm.conversation_id = ?
+      WHERE dm.conversation_id = ? ${pageFilter}
       GROUP BY dm.id
-      ORDER BY dm.created_at ASC
+      ORDER BY dm.created_at ASC, dm.id ASC
     `, [req.user.userId, conversationId]);
     
     res.json(messages);

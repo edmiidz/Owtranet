@@ -455,14 +455,19 @@ export const invitesApi = {
 };
 
 // Messages API
+export const DM_PAGE_SIZE = 50;
+
 export const messagesApi = {
   getConversations: async (): Promise<any[]> => {
     const response = await api.get('/messages/conversations');
     return response.data;
   },
 
-  getMessages: async (conversationId: number): Promise<any[]> => {
-    const response = await api.get(`/messages/conversations/${conversationId}`);
+  // Newest `limit` messages (oldest first); pass beforeId to page further back.
+  getMessages: async (conversationId: number, opts: { limit?: number; beforeId?: number } = {}): Promise<any[]> => {
+    const response = await api.get(`/messages/conversations/${conversationId}`, {
+      params: { limit: opts.limit ?? DM_PAGE_SIZE, before_id: opts.beforeId }
+    });
     return response.data;
   },
 
