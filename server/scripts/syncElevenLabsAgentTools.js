@@ -11,9 +11,19 @@
  * dedicated integration token that survives personal-token rotation (see
  * docs/WEBHOOK_API.md → "Integration tokens").
  *
+ * Other agents: every other agent that already uses any of these tools (found
+ * through ElevenLabs' dependent-agents lookup), plus any listed in
+ * ELEVENLABS_EXTRA_AGENT_IDS, gets whichever intranet tools it is missing
+ * appended to its tool_ids. Only ELEVENLABS_AGENT_ID gets the prompt; the others
+ * keep their own. Without this, a tool added here would reach only the main
+ * agent, and the rest would keep telling members they can't do it.
+ *
  * Reads from .env (run on the box, or export the vars):
  *   ELEVENLABS_API_KEY     workspace key that owns the agent (required)
  *   ELEVENLABS_AGENT_ID    the agent to sync (required)
+ *   ELEVENLABS_EXTRA_AGENT_IDS
+ *                          optional, comma-separated: more agents that should get
+ *                          the intranet tools even if they use none of them yet
  *   BASE_URL               this intranet's public URL (default https://intranet.example.com)
  *   ELEVENLABS_AGENT_NAME  spoken name (default "Assistant")
  *   COMPANY_NAME           used in the prompt (default "Owtranet")
@@ -39,6 +49,8 @@ const AGENT_NAME = process.env.ELEVENLABS_AGENT_NAME || 'Assistant';
 const COMPANY_NAME = process.env.COMPANY_NAME || 'Owtranet';
 const SECRET_NAME = 'INTRANET_API_KEY';
 const NEW_INTRANET_KEY = process.env.VOICE_AGENT_INTRANET_API_KEY || null;
+const EXTRA_AGENT_IDS = (process.env.ELEVENLABS_EXTRA_AGENT_IDS || '')
+  .split(',').map(s => s.trim()).filter(Boolean);
 
 if (!API_KEY || !AGENT_ID) {
   console.error('ELEVENLABS_API_KEY and ELEVENLABS_AGENT_ID are required');
@@ -352,17 +364,20 @@ async function main() {
   const { tools: existing } = await el('GET', '/tools');
   const byName = new Map(existing.map(t => [t.tool_config.name, t]));
   const toolIds = [];
+  const toolNames = new Map(); // id → name, including tools created by this run
   for (const cfg of toolDefinitions(secret.secret_id)) {
     const current = byName.get(cfg.name);
     if (current) {
       console.log(`${DRY_RUN ? '[dry-run] would update' : 'Updating'} tool ${cfg.name} (${current.id})`);
       if (!DRY_RUN) await el('PATCH', `/tools/${current.id}`, { tool_config: cfg });
       toolIds.push(current.id);
+      toolNames.set(current.id, cfg.name);
     } else {
       console.log(`${DRY_RUN ? '[dry-run] would create' : 'Creating'} tool ${cfg.name}`);
       if (!DRY_RUN) {
         const created = await el('POST', '/tools', { tool_config: cfg });
         toolIds.push(created.id);
+        toolNames.set(created.id, cfg.name);
       }
     }
   }
@@ -389,7 +404,79 @@ async function main() {
   console.log(`${DRY_RUN ? '[dry-run] would patch' : 'Patching'} agent ${AGENT_ID} (${agent.name}): ${finalToolIds.length} tools, prompt ${PROMPT.length} chars`);
   if (!DRY_RUN) await el('PATCH', `/agents/${AGENT_ID}`, patch);
 
+  // 4. Every other agent that uses any intranet tool, plus ELEVENLABS_EXTRA_AGENT_IDS,
+  //    gets the intranet tools it is missing. Only tool_ids is patched: those
+  //    agents keep their own prompts and other tools.
+  const failures = await syncOtherAgents({ existing, intranetNames, toolIds, toolNames });
+  const newTools = toolDefinitions(secret.secret_id).filter(cfg => !byName.has(cfg.name)).map(cfg => cfg.name);
+  if (DRY_RUN && newTools.length) {
+    console.log(`[dry-run] tools created by this run would also be added to those agents: ${newTools.join(', ')}`);
+  }
+  if (failures) {
+    console.error(`${failures} agent(s) could not be updated; fix them in the ElevenLabs console and re-run`);
+    process.exitCode = 1;
+  }
+
   console.log(DRY_RUN ? 'Dry run complete.' : 'Sync complete.');
+}
+
+// Agents (other than AGENT_ID) that use a tool, following the paginated
+// dependent-agents list. Agents this key can't see come back without an id.
+async function dependentAgents(toolId) {
+  const found = [];
+  let cursor = null;
+  for (let page = 0; page < 50; page++) {
+    const data = await el('GET', `/tools/${toolId}/dependent-agents${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`);
+    for (const a of (data && data.agents) || []) {
+      if (a.id && a.id !== AGENT_ID) found.push({ id: a.id, name: a.name });
+    }
+    if (!data || !data.has_more || !data.next_cursor) break;
+    cursor = data.next_cursor;
+  }
+  return found;
+}
+
+async function syncOtherAgents({ existing, intranetNames, toolIds, toolNames }) {
+  let failures = 0;
+  const targets = new Map();
+  for (const t of existing.filter(x => intranetNames.has(x.tool_config.name))) {
+    try {
+      for (const a of await dependentAgents(t.id)) targets.set(a.id, a.name);
+    } catch (err) {
+      failures++;
+      console.error(`Could not list agents using ${t.tool_config.name}: ${err.message}`);
+    }
+  }
+  for (const id of EXTRA_AGENT_IDS) {
+    if (id !== AGENT_ID && !targets.has(id)) targets.set(id, null);
+  }
+
+  for (const [id, knownName] of targets) {
+    // One broken agent (e.g. a dangling knowledge-base reference that makes every
+    // PATCH fail) must not stop the others from getting their tools.
+    try {
+      const other = await el('GET', `/agents/${id}`);
+      const label = `${id} (${other.name || knownName || 'unnamed'})`;
+      const currentIds = other.conversation_config.agent.prompt.tool_ids || [];
+      const missing = toolIds.filter(t => !currentIds.includes(t));
+      if (!missing.length) {
+        console.log(`Agent ${label} already has every intranet tool`);
+        continue;
+      }
+      const names = missing.map(t => toolNames.get(t) || t);
+      console.log(`${DRY_RUN ? '[dry-run] would add' : 'Adding'} to agent ${label}: ${names.join(', ')}`);
+      if (!DRY_RUN) {
+        await el('PATCH', `/agents/${id}`, {
+          conversation_config: { agent: { prompt: { tool_ids: [...currentIds, ...missing] } } }
+        });
+      }
+    } catch (err) {
+      failures++;
+      console.error(`Agent ${id}${knownName ? ` (${knownName})` : ''} failed: ${err.message}`);
+    }
+  }
+  if (!targets.size) console.log('No other agents use the intranet tools');
+  return failures;
 }
 
 main().catch(err => {
