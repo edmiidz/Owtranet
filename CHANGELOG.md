@@ -5,6 +5,16 @@ upgrade needs. To upgrade any instance from any earlier version, follow
 [Upgrading an existing instance](README.md#upgrading-an-existing-instance):
 `node scripts/check-schema.js` names every migration your database still needs.
 
+## Unreleased
+
+### Added
+
+- **Optional inbound spam/phishing filtering for self-hosted mail** (#44).
+  `scripts/mail-postscreen.sh` puts Postfix postscreen with weighted DNS
+  blocklist scoring in front of port 25, with a log-only mode, a report of what
+  would be refused, and automatic rollback. Nothing changes until you run it; see
+  "Inbound spam and phishing filtering" in `docs/EMAIL_SYSTEM_ARCHITECTURE.md`.
+
 ## 1.1.1 — 2026-11-18
 
 ### Upgrade steps (from 1.1.0)
