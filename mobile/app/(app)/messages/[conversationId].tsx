@@ -29,6 +29,8 @@ export default function ConversationScreen() {
   const [error, setError] = useState<string | null>(null);
   const [text, setText] = useState('');
   const [replyTo, setReplyTo] = useState<DirectMessage | null>(null);
+  // Editing reuses the composer: the message's text is loaded into it and Send becomes Save.
+  const [editing, setEditing] = useState<DirectMessage | null>(null);
   const [busy, setBusy] = useState(false);
   const other = useRef<{ id: number; name: string } | null>(null);
   // An AI agent answers a DM a few seconds after it's sent: show "<Agent> is
@@ -88,7 +90,25 @@ export default function ConversationScreen() {
     } catch { load(); }
   }
 
+  function startEdit(m: DirectMessage) {
+    setReplyTo(null); setEditing(m); setText(m.content);
+  }
+
+  function cancelEdit() {
+    setEditing(null); setText('');
+  }
+
+  async function saveEdit() {
+    const content = text.trim();
+    if (!editing || !content) return;
+    setBusy(true);
+    try { await messagesApi.edit(editing.id, content); setEditing(null); setText(''); await load(); }
+    catch (e) { setError(errorMessage(e)); }
+    finally { setBusy(false); }
+  }
+
   async function send() {
+    if (editing) return saveEdit();
     const recipient = other.current?.id;
     if (!text.trim() || !recipient) return;
     setBusy(true);
@@ -111,7 +131,7 @@ export default function ConversationScreen() {
             renderItem={({ item }) => {
               const mine = item.sender_id === me?.id;
               return (
-                <Pressable onLongPress={() => showMessageActions({ content: item.deleted_at ? '' : item.content, onReply: () => setReplyTo(item) })} style={{ alignSelf: mine ? 'flex-end' : 'flex-start', maxWidth: '82%', marginBottom: 8 }}>
+                <Pressable onLongPress={() => showMessageActions({ content: item.deleted_at ? '' : item.content, onReply: () => { if (editing) cancelEdit(); setReplyTo(item); }, onEdit: mine && !item.deleted_at ? () => startEdit(item) : undefined })} style={{ alignSelf: mine ? 'flex-end' : 'flex-start', maxWidth: '82%', marginBottom: 8 }}>
                   <View style={{ backgroundColor: mine ? t.primary : t.card, borderRadius: 16, padding: 10, borderWidth: mine ? 0 : 1, borderColor: t.border }}>
                     {item.reply_to_content ? <Text style={{ color: mine ? '#dbeafe' : t.muted, fontSize: 12, fontStyle: 'italic', marginBottom: 4 }} numberOfLines={2}>↪ {item.reply_to_sender_name}: {item.reply_to_content}</Text> : null}
                     {item.deleted_at
@@ -119,7 +139,7 @@ export default function ConversationScreen() {
                       : <Markdown color={mine ? '#fff' : undefined}>{item.content}</Markdown>}
                   </View>
                   <View style={{ flexDirection: 'row', gap: 10, alignItems: 'center', marginTop: 2, alignSelf: mine ? 'flex-end' : 'flex-start' }}>
-                    <Text style={{ color: t.muted, fontSize: 11 }}>{timeAgo(item.created_at)}{mine && item.is_read ? ' · read' : ''}</Text>
+                    <Text style={{ color: t.muted, fontSize: 11 }}>{timeAgo(item.created_at)}{item.edited_at && !item.deleted_at ? ' · (edited)' : ''}{mine && item.is_read ? ' · read' : ''}</Text>
                     {!item.deleted_at ? (
                       <Pressable onPress={() => like(item)} hitSlop={8} style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
                         <Ionicons name={item.user_vote ? 'heart' : 'heart-outline'} size={13} color={item.user_vote ? t.danger : t.muted} />
@@ -133,10 +153,11 @@ export default function ConversationScreen() {
         )}
         {agentTyping ? <Text style={{ color: t.muted, fontSize: 13, fontStyle: 'italic', paddingHorizontal: 14, paddingBottom: 6 }}>{agentTyping.name} is typing…</Text> : null}
         <View style={{ borderTopWidth: 1, borderTopColor: t.border, backgroundColor: t.card }}>
+          {editing ? <Pressable onPress={cancelEdit} style={{ paddingHorizontal: 12, paddingTop: 8 }}><Text style={{ color: t.muted, fontSize: 12 }} numberOfLines={1}>Editing message  ✕</Text></Pressable> : null}
           {replyTo ? <Pressable onPress={() => setReplyTo(null)} style={{ paddingHorizontal: 12, paddingTop: 8 }}><Text style={{ color: t.muted, fontSize: 12 }} numberOfLines={1}>Replying to {replyTo.sender_name}: {replyTo.content}  ✕</Text></Pressable> : null}
           <View style={{ flexDirection: 'row', gap: 8, padding: 10, alignItems: 'flex-end' }}>
             <View style={{ flex: 1 }}><Input placeholder="Message…" value={text} onChangeText={setText} multiline style={{ minHeight: 40, maxHeight: 120 }} /></View>
-            <Button title="Send" icon="send" onPress={send} loading={busy} disabled={!text.trim()} style={{ marginBottom: 12 }} />
+            <Button title={editing ? 'Save' : 'Send'} icon={editing ? 'checkmark' : 'send'} onPress={send} loading={busy} disabled={!text.trim()} style={{ marginBottom: 12 }} />
           </View>
         </View>
       </View>

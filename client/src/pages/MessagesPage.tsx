@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Send, MessageSquare, ArrowLeft, Heart, Trash2, Reply, X } from 'lucide-react';
+import { Send, MessageSquare, ArrowLeft, Heart, Trash2, Reply, X, Pencil } from 'lucide-react';
 import { useAuthStore } from '../stores/authStore';
 import { messagesApi, usersApi } from '../utils/api';
 import { notifyBadgesChanged } from '../utils/badges';
 import ForumContent from '../components/ForumContent';
+import MessageEditForm, { editedTitle } from '../components/MessageEditForm';
 import { DirectMessage } from '../types';
 
 interface Conversation {
@@ -31,6 +32,7 @@ const MessagesPage: React.FC = () => {
   const [error, setError] = useState<string>('');
   const [newMessage, setNewMessage] = useState('');
   const [replyTo, setReplyTo] = useState<DirectMessage | null>(null);
+  const [editingId, setEditingId] = useState<number | null>(null);
   const [sending, setSending] = useState(false);
   // An AI agent answers a DM a few seconds after it is sent; while it writes,
   // show "<Agent> is typing…" and poll the thread until its reply lands.
@@ -314,9 +316,19 @@ const MessagesPage: React.FC = () => {
     textareaRef.current?.focus();
   };
 
+  const saveEdit = async (messageId: number, content: string) => {
+    const result = await messagesApi.editMessage(messageId, content);
+    if (result.data) {
+      const updated = result.data;
+      setMessages(prev => prev.map(msg => (msg.id === messageId ? { ...msg, ...updated } : msg)));
+    }
+    setEditingId(null);
+  };
+
   const selectConversation = (conversation: Conversation) => {
     setSelectedConversation(conversation.conversation_id);
     setReplyTo(null);
+    setEditingId(null);
     if (conversation.conversation_id !== -1) {
       loadMessages(conversation.conversation_id);
     } else {
@@ -496,8 +508,8 @@ const MessagesPage: React.FC = () => {
                   <div className={`${
                     // Give messages carrying a pasted image more room than a
                     // text bubble, otherwise screenshots render postage-stamp sized.
-                    /!\[[^\]]*\]\(|<img/i.test(message.content || '')
-                      ? 'max-w-[85%] lg:max-w-lg'
+                    editingId === message.id || /!\[[^\]]*\]\(|<img/i.test(message.content || '')
+                      ? 'max-w-[85%] lg:max-w-lg w-full'
                       : 'max-w-xs lg:max-w-md'
                   } px-4 py-2 rounded-lg ${
                     message.deleted_at
@@ -522,10 +534,18 @@ const MessagesPage: React.FC = () => {
                             <p className="truncate">{message.reply_to_content}</p>
                           </div>
                         )}
-                        <ForumContent
-                          content={message.content_html || message.content}
-                          className={message.sender_id === currentUser?.id ? 'text-white' : 'text-gray-900'}
-                        />
+                        {editingId === message.id ? (
+                          <MessageEditForm
+                            initialContent={message.content}
+                            onSave={(content) => saveEdit(message.id, content)}
+                            onCancel={() => setEditingId(null)}
+                          />
+                        ) : (
+                          <ForumContent
+                            content={message.content_html || message.content}
+                            className={message.sender_id === currentUser?.id ? 'text-white' : 'text-gray-900'}
+                          />
+                        )}
                       </>
                     )}
                     <div className={`flex items-center justify-between mt-1 ${
@@ -535,10 +555,13 @@ const MessagesPage: React.FC = () => {
                     }`}>
                       <p className="text-xs">
                         {formatMessageTime(message.created_at)}
+                        {message.edited_at && !message.deleted_at && (
+                          <span className="italic opacity-80" title={editedTitle(message.edited_at)}> (edited)</span>
+                        )}
                       </p>
 
                       {/* Action buttons */}
-                      {!message.deleted_at && (
+                      {!message.deleted_at && editingId !== message.id && (
                         <div className="flex items-center space-x-2">
                           {/* Like button */}
                           <div className="flex items-center space-x-1">
@@ -576,6 +599,17 @@ const MessagesPage: React.FC = () => {
                           >
                             <Reply className="h-3 w-3" />
                           </button>
+
+                          {/* Edit button (only for own messages) */}
+                          {message.sender_id === currentUser?.id && (
+                            <button
+                              onClick={() => setEditingId(message.id)}
+                              className="p-1 rounded hover:bg-opacity-80 transition-colors text-blue-200 hover:text-white"
+                              title="Edit message"
+                            >
+                              <Pencil className="h-3 w-3" />
+                            </button>
+                          )}
 
                           {/* Delete button (only for own messages) */}
                           {message.sender_id === currentUser?.id && (

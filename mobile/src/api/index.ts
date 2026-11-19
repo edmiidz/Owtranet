@@ -82,6 +82,7 @@ export const messagesApi = {
   markRead: (conversationId: number) => api.put(`/messages/conversations/${conversationId}/read`).then(r => r.data),
   unreadCount: () => api.get<{ unread_count: number }>('/messages/unread-count').then(r => r.data),
   remove: (messageId: number) => api.delete(`/messages/${messageId}`).then(r => r.data),
+  edit: (messageId: number, content: string) => api.put(`/messages/${messageId}`, { content }).then(r => r.data),
   like: (messageId: number) => api.post<{ liked: boolean; total_likes: number; user_vote: number }>(`/messages/${messageId}/like`).then(r => r.data),
 };
 
@@ -91,6 +92,7 @@ export const groupChatApi = {
   send: (groupId: number, content: string, reply_to_id?: number) => api.post(`/group-chat/${groupId}/messages`, { content, reply_to_id }).then(r => r.data),
   markRead: (groupId: number, messageId: number) => api.put(`/group-chat/${groupId}/read`, { messageId }).then(r => r.data),
   like: (groupId: number, messageId: number) => api.post(`/group-chat/${groupId}/messages/${messageId}/like`).then(r => r.data),
+  edit: (groupId: number, messageId: number, content: string) => api.put(`/group-chat/${groupId}/messages/${messageId}`, { content }).then(r => r.data),
 };
 
 export const searchApi = {

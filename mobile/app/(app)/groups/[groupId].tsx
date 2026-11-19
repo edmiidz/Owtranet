@@ -31,6 +31,8 @@ export default function GroupChatScreen() {
   const [error, setError] = useState<string | null>(null);
   const [text, setText] = useState('');
   const [replyTo, setReplyTo] = useState<GroupChatMessage | null>(null);
+  // Editing reuses the composer: the message's text is loaded into it and Send becomes Save.
+  const [editing, setEditing] = useState<GroupChatMessage | null>(null);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -59,7 +61,25 @@ export default function GroupChatScreen() {
     load(); const timer = setInterval(load, 15000); return () => clearInterval(timer);
   }, [load, id, byName, nav]);
 
+  function startEdit(m: GroupChatMessage) {
+    setReplyTo(null); setEditing(m); setText(m.content);
+  }
+
+  function cancelEdit() {
+    setEditing(null); setText('');
+  }
+
+  async function saveEdit() {
+    const content = text.trim();
+    if (!editing || !content) return;
+    setBusy(true);
+    try { await groupChatApi.edit(id, editing.id, content); setEditing(null); setText(''); await load(); }
+    catch (e) { setError(errorMessage(e)); }
+    finally { setBusy(false); }
+  }
+
   async function send() {
+    if (editing) return saveEdit();
     const content = text.trim();
     if (!content) return;
     setBusy(true);
@@ -88,7 +108,7 @@ export default function GroupChatScreen() {
               const mine = item.sender_id === me?.id;
               if (item.message_type === 'system') return <Text style={{ color: t.muted, textAlign: 'center', fontSize: 12, marginVertical: 6 }}>{item.content}</Text>;
               return (
-                <Pressable onLongPress={() => showMessageActions({ content: item.is_deleted ? '' : item.content, onReply: () => setReplyTo(item) })} style={{ flexDirection: 'row', gap: 8, marginBottom: 10, alignSelf: mine ? 'flex-end' : 'flex-start', maxWidth: '85%' }}>
+                <Pressable onLongPress={() => showMessageActions({ content: item.is_deleted ? '' : item.content, onReply: () => { if (editing) cancelEdit(); setReplyTo(item); }, onEdit: mine && !item.is_deleted ? () => startEdit(item) : undefined })} style={{ flexDirection: 'row', gap: 8, marginBottom: 10, alignSelf: mine ? 'flex-end' : 'flex-start', maxWidth: '85%' }}>
                   {!mine ? <Avatar uri={item.sender_avatar_url} name={item.sender_name} size={28} /> : null}
                   <View>
                     {!mine ? <Text style={{ color: t.muted, fontSize: 12, marginBottom: 2 }}>{item.sender_name}</Text> : null}
@@ -99,7 +119,7 @@ export default function GroupChatScreen() {
                         : <Markdown color={mine ? '#fff' : undefined}>{item.content}</Markdown>}
                     </View>
                     <View style={{ flexDirection: 'row', gap: 10, alignItems: 'center', marginTop: 2, alignSelf: mine ? 'flex-end' : 'flex-start' }}>
-                      <Text style={{ color: t.muted, fontSize: 11 }}>{timeAgo(item.created_at)}{item.is_edited ? ' · edited' : ''}</Text>
+                      <Text style={{ color: t.muted, fontSize: 11 }}>{timeAgo(item.created_at)}{item.is_edited ? ' · (edited)' : ''}</Text>
                       <Pressable onPress={async () => { await groupChatApi.like(id, item.id).catch(() => {}); load(); }} style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
                         <Ionicons name={item.user_liked ? 'heart' : 'heart-outline'} size={13} color={item.user_liked ? t.danger : t.muted} />
                         {item.total_likes ? <Text style={{ color: t.muted, fontSize: 11 }}>{item.total_likes}</Text> : null}
@@ -111,10 +131,11 @@ export default function GroupChatScreen() {
             }} />
         )}
         <View style={{ borderTopWidth: 1, borderTopColor: t.border, backgroundColor: t.card }}>
+          {editing ? <Pressable onPress={cancelEdit} style={{ paddingHorizontal: 12, paddingTop: 8 }}><Text style={{ color: t.muted, fontSize: 12 }} numberOfLines={1}>Editing message  ✕</Text></Pressable> : null}
           {replyTo ? <Pressable onPress={() => setReplyTo(null)} style={{ paddingHorizontal: 12, paddingTop: 8 }}><Text style={{ color: t.muted, fontSize: 12 }} numberOfLines={1}>Replying to {replyTo.sender_name}: {replyTo.content}  ✕</Text></Pressable> : null}
           <View style={{ flexDirection: 'row', gap: 8, padding: 10, alignItems: 'flex-end' }}>
             <View style={{ flex: 1 }}><Input placeholder="Message the group…" value={text} onChangeText={setText} multiline style={{ minHeight: 40, maxHeight: 120 }} /></View>
-            <Button title="Send" icon="send" onPress={send} loading={busy} disabled={!text.trim()} style={{ marginBottom: 12 }} />
+            <Button title={editing ? 'Save' : 'Send'} icon={editing ? 'checkmark' : 'send'} onPress={send} loading={busy} disabled={!text.trim()} style={{ marginBottom: 12 }} />
           </View>
         </View>
       </View>

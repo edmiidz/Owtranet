@@ -477,6 +477,7 @@ export interface GroupChatMessage {
   message_type: 'text' | 'file' | 'system';
   reply_to_id?: number;
   is_edited: boolean;
+  edited_at?: string | null;
   is_deleted: boolean;
   created_at: string;
   updated_at: string;
@@ -523,6 +524,7 @@ export interface DirectMessage {
   deleted_at?: string | null;
   deleted_by?: number | null;
   created_at: string;
+  edited_at?: string | null;
   updated_at: string;
   sender_name: string;
   sender_github: string;
