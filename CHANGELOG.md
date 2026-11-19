@@ -5,6 +5,17 @@ upgrade needs. To upgrade any instance from any earlier version, follow
 [Upgrading an existing instance](README.md#upgrading-an-existing-instance):
 `node scripts/check-schema.js` names every migration your database still needs.
 
+## Unreleased
+
+### Fixes
+
+- **Mobile app stuck on error screens after the session expired.** The server
+  answers an expired or invalid sign-in with 403 "Invalid or expired token", but
+  the app only signed out on 401, so every screen showed an error with a Retry
+  that could never work. The app now signs that account out (or switches to the
+  next signed-in account), as the web client already did. Other 403s, such as
+  permission denials, still keep you signed in. Ships with the next app build.
+
 ## 1.1.1 — 2026-11-18
 
 ### Upgrade steps (from 1.1.0)

@@ -24,9 +24,9 @@ api.interceptors.response.use(
       useAuthStore.getState().setRequiresAgreement(true);
       return Promise.reject(error);
     }
-    if (status === 401 && !url.includes('/auth/')) {
+    if (isSessionExpired(status, error.response?.data) && !url.includes('/auth/')) {
       // Token expired / revoked → drop that account; the root layout redirects to login
-      // (or the next signed-in account). Skip a late 401 for an account we already left.
+      // (or the next signed-in account). Skip a late reply for an account we already left.
       const sent = String(error.config?.headers?.Authorization || '');
       const { token, logout } = useAuthStore.getState();
       if (token && sent === `Bearer ${token}`) logout();
@@ -34,6 +34,18 @@ api.interceptors.response.use(
     return Promise.reject(error);
   }
 );
+
+/**
+ * True when the server rejected the session itself rather than this one request.
+ * `authenticateToken` in server.js answers a missing token with 401 but a bad or
+ * expired JWT with 403 + "Invalid or expired token". A 401-only check left the app
+ * on every screen with an error card and a Retry that could never succeed.
+ * Other 403s are real permission denials and must NOT sign the user out.
+ */
+export function isSessionExpired(status: number | undefined, data: any): boolean {
+  if (status === 401) return true;
+  return status === 403 && typeof data?.error === 'string' && /invalid or expired token/i.test(data.error);
+}
 
 export function errorMessage(e: unknown, fallback = 'Something went wrong'): string {
   const err = e as AxiosError<any>;
