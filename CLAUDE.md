@@ -78,6 +78,11 @@ Fresh database: `db/schema.sql` → `db/seed.sql` → `node scripts/create-admin
   comments and group chat, and DMs to an agent, queue a Claude reply
   (`ai_agent_replies`, with hourly caps). Agents never answer agents. Seed with
   `node server/scripts/seedAiAgents.js`.
+- **`server/lib/search/`**: optional search backends behind `/api/search`
+  (`runSearch()` in `server.js`). `searchIndex.js` ranks with OpenSearch but
+  re-loads every hit from MySQL with the permission predicates, so keep those
+  in step with the MySQL queries; `retrievalSuite.js` adds "connected sources".
+  See `docs/SEARCH.md`.
 - **`server/lib/scheduledEmails.js`** + `server/cron/scheduledEmailSender.js`:
   scheduled webmail sends (times in UTC).
 - **`server/lib/emailNotifications.js`**: whether a mention/comment/DM is also

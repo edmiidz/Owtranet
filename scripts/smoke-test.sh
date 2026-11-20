@@ -39,6 +39,7 @@ ENDPOINTS=(
   "/api/deliverables"
   "/api/investment-tracker/statistics"
   "/api/search?q=smoke"
+  "/api/search-index/status"   # 200 whether or not OpenSearch is configured
   "/api/users/search?q=a"
   "/api/quicklinks"
   "/api/config/branding"

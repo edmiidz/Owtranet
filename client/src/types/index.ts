@@ -349,6 +349,22 @@ export interface SearchResults {
   ledger?: LedgerSearchResult[];
   docs?: GithubDoc[];
   agents?: AiAgentSearchResult[];
+  // Connected sources (external systems via a Retrieval Suite), already
+  // filtered by the source system's own permissions for the signed-in member.
+  connected?: ConnectedSearchResult[];
+  connected_error?: string;
+  connected_enabled?: boolean;
+  search_backend?: 'opensearch' | 'mysql';
+}
+
+export interface ConnectedSearchResult {
+  id: string;
+  title: string;
+  url: string | null;
+  teaser: string;
+  score: number | null;
+  source: string;
+  modified: string | null;
 }
 
 export interface Quicklink {

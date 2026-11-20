@@ -125,6 +125,23 @@ module.exports = {
       time: true
     },
     {
+      // OpenSearch indexer for intranet search. Only does anything when
+      // OPENSEARCH_URL is set in .env (see docs/SEARCH.md); without it search
+      // uses MySQL and this process just idles.
+      name: 'owtranet-search-indexer',
+      script: './server/cron/searchIndexer.js',
+      args: '--apply --daemon',
+      instances: 1,
+      exec_mode: 'fork',
+      autorestart: true,
+      watch: false,
+      restart_delay: 30000,
+      max_memory_restart: '256M',
+      error_file: './logs/search-indexer-err.log',
+      out_file: './logs/search-indexer-out.log',
+      time: true
+    },
+    {
       // Scheduled webmail sends — polls scheduled_emails every 30 s
       // and sends rows whose time has come through the normal webmail SMTP path.
       // Needs server/migrations/add_scheduled_emails.sql applied first.

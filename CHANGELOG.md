@@ -5,6 +5,32 @@ upgrade needs. To upgrade any instance from any earlier version, follow
 [Upgrading an existing instance](README.md#upgrading-an-existing-instance):
 `node scripts/check-schema.js` names every migration your database still needs.
 
+## Unreleased
+
+### Upgrade steps
+
+No migrations and no new dependencies. Both new search features are off until
+configured; without them search behaves as before (with the fix below).
+
+### Fixes
+
+- **Search showed private posts.** `/api/search` returned `author_only` and
+  `specific_members` posts, and comments on them, to every member. It now
+  applies the same visibility rule as the forum.
+
+### New
+
+- **OpenSearch for intranet search** (optional, `OPENSEARCH_URL`). Ranks posts,
+  comments, tasks, investments and docs with stemming, typo tolerance and
+  partial-word matching; permissions are still enforced by MySQL, and search
+  falls back to MySQL if OpenSearch is down. Needs the new
+  `owtranet-search-indexer` PM2 app. See [docs/SEARCH.md](docs/SEARCH.md).
+- **Connected sources** (optional, `RETRIEVAL_SUITE_*`). A Search tab with
+  permission-trimmed results from external systems through a RheinInsights
+  Retrieval Suite.
+- **`GET /api/v1/search`** for integrations: the same search as the token's
+  member (or `acting_user_id`).
+
 ## 1.1.1 — 2026-11-18
 
 ### Upgrade steps (from 1.1.0)

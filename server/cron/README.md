@@ -10,6 +10,7 @@ under PM2 (see `ecosystem.config.js`). All of them read the app's `.env`.
 | `radioWorker.js` | Corporate Radio: keeps a TTS-friendly summary of every forum post in `radio_segments` (Claude, `RADIO_MODEL`), served by `GET /api/radio/feed`. | `--apply --daemon` |
 | `scheduledEmailSender.js` | Sends queued webmail messages from `scheduled_emails` once `scheduled_at` (UTC) has passed; 3 attempts 5 min apart, then `failed`. `SCHEDULED_EMAIL_INTERVAL_SECS` (default 30). | `--apply --daemon` |
 | `sweepGithubDocs.js` | Mirrors markdown docs from GitHub repos into `github_docs` so intranet search can find them. Sources are configured in Admin → Search Adapters (`search_adapters` / `search_adapter_rules`). Token: `GITHUB_DOCS_TOKEN`. | cron, e.g. hourly, `--apply` |
+| `searchIndexer.js` | Keeps the OpenSearch index behind intranet search current (only when `OPENSEARCH_URL` is set): full rebuild + alias swap at start and every `SEARCH_INDEX_REBUILD_MINS` (60), changed rows every `SEARCH_INDEX_INTERVAL_SECS` (30). See `docs/SEARCH.md`. | `--apply --daemon` |
 | `autoApproveDeliverables.js` | Auto-approves Investment Tracker deliverables that have been pending for six weeks or more (`auto_approved` column, shown as an "Auto-approved" badge). | cron, daily, `--apply` |
 
 Examples:
@@ -19,6 +20,7 @@ node server/cron/radioWorker.js                  # dry run: list what would be g
 node server/cron/radioWorker.js --apply --post=123 --force   # regenerate one post
 node server/cron/pushDispatcher.js --apply       # one pass
 node server/cron/sweepGithubDocs.js --apply --repo=example-org/handbook
+node server/cron/searchIndexer.js --apply --rebuild   # one full search-index rebuild
 ```
 
 Logs go to PM2 (`pm2 logs <name>`).

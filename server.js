@@ -26,6 +26,8 @@ const { findMissing: findMissingSchema, formatReport: formatSchemaReport } = req
 const { EMAIL_NOTIFICATION_MODES, awayMinutes: emailNotifyAwayMinutes, touchUserActivity, checkEmailNotification } = require('./server/lib/emailNotifications');
 const { findUsersByEmail } = require('./server/lib/emailIdentity'); // Gmail dot-insensitive sign-in lookup
 const { visiblePostsWhere } = require('./server/lib/postVisibility');
+const searchIndex = require('./server/lib/search/searchIndex'); // OpenSearch (optional)
+const retrievalSuite = require('./server/lib/search/retrievalSuite'); // connected sources (optional)
 require('dotenv').config();
 
 if (!process.env.JWT_SECRET) {
@@ -7038,21 +7040,75 @@ app.put('/api/notifications/mark-all-read', authenticateToken, async (req, res) 
 
 // ===================== SEARCH ENDPOINT =====================
 
-// Global search
-app.get('/api/search', authenticateToken, async (req, res) => {
+// Log an OpenSearch failure at most once a minute; search falls back to MySQL.
+let lastSearchIndexError = 0;
+function noteSearchIndexFailure(err) {
+  if (Date.now() - lastSearchIndexError > 60000) {
+    lastSearchIndexError = Date.now();
+    console.error('Search index unavailable, using MySQL search:', err.message);
+  }
+}
+
+// Connected sources (Retrieval Suite) for one member. Resolves, never rejects:
+// a slow or broken Suite must not break intranet search.
+async function searchConnectedSources(user, q) {
   try {
-    const { q, type = 'all' } = req.query;
-    
+    const [rows] = await db.execute('SELECT email, company_email FROM users WHERE id = ?', [user.userId]);
+    if (!rows.length) return { items: [] };
+    return { items: await retrievalSuite.search(q, rows[0]) };
+  } catch (err) {
+    console.error('Connected-source search failed:', err.message);
+    return { items: [], error: 'Connected sources are unavailable right now' };
+  }
+}
+
+// Global search, shared by GET /api/search (members) and GET /api/v1/search
+// (API tokens, e.g. a voice agent acting for a member).
+//
+// Posts, comments, tasks, investments and docs are ranked by OpenSearch when
+// OPENSEARCH_URL is set (server/lib/search/searchIndex.js; hits are re-checked
+// against MySQL permissions there) and fall back to the MySQL queries below if
+// it is unset or failing. People, AI agents and the ledger always use MySQL.
+// `connected` holds results from external systems via a Retrieval Suite when
+// RETRIEVAL_SUITE_* is configured.
+//
+// `includeConnected: false` skips connected sources for type 'all'; the web
+// client fetches them in a separate request so a slow external system never
+// holds up the intranet results.
+async function runSearch(user, rawQ, type = 'all', { includeConnected = true } = {}) {
+    const q = typeof rawQ === 'string' ? rawQ : '';
     const results = {};
+    const wants = (kind) => type === 'all' || type === kind;
+
+    // Started first so the external round trip overlaps the local queries.
+    const connectedPromise = q.trim() && retrievalSuite.enabled() && wants('connected')
+      && (includeConnected || type === 'connected')
+      ? searchConnectedSources(user, q)
+      : null;
+
+    let indexed = {};
+    if (q.trim() && searchIndex.enabled()) {
+      const kinds = searchIndex.KINDS.filter(wants);
+      if (kinds.length) {
+        try {
+          indexed = (await searchIndex.search(db, user, q, kinds)) || {};
+        } catch (err) {
+          noteSearchIndexFailure(err);
+          indexed = {};
+        }
+      }
+    }
 
     // Posts and comments obey the shared post-visibility rule: a member must
     // never find a specific_members/author_only post (or a comment on one)
     // they could not open. The predicate is applied in SQL so the hidden rows
     // never leave the database.
-    const postVis = visiblePostsWhere('p', req.user.userId);
+    const postVis = visiblePostsWhere('p', user.userId);
 
     // Search posts
-    if (type === 'all' || type === 'posts') {
+    if (indexed.posts) {
+      results.posts = indexed.posts;
+    } else if (type === 'all' || type === 'posts') {
       let postsQuery, postsParams;
 
       if (q) {
@@ -7105,7 +7161,9 @@ app.get('/api/search', authenticateToken, async (req, res) => {
     }
     
     // Search comments
-    if (type === 'all' || type === 'comments') {
+    if (indexed.comments) {
+      results.comments = indexed.comments;
+    } else if (type === 'all' || type === 'comments') {
       let commentsQuery, commentsParams;
 
       if (q) {
@@ -7220,7 +7278,9 @@ app.get('/api/search', authenticateToken, async (req, res) => {
     }
 
     // Search investments (deliverables) - only approved records are viewable by all
-    if (type === 'all' || type === 'investments') {
+    if (indexed.investments) {
+      results.investments = indexed.investments;
+    } else if (type === 'all' || type === 'investments') {
       let investmentsQuery, investmentsParams;
 
       if (q) {
@@ -7281,7 +7341,9 @@ app.get('/api/search', authenticateToken, async (req, res) => {
 
     // Search tasks (title + description). Tasks are visible to every signed-in
     // member (same as GET /api/tasks), so no per-user filter here.
-    if (type === 'all' || type === 'tasks') {
+    if (indexed.tasks) {
+      results.tasks = indexed.tasks;
+    } else if (type === 'all' || type === 'tasks') {
       const taskSelect = `
         SELECT t.id, t.title, t.description, t.status, t.priority, t.due_date,
                t.created_by, t.assigned_to, t.created_at, t.updated_at,
@@ -7351,9 +7413,9 @@ app.get('/api/search', authenticateToken, async (req, res) => {
         ledgerParams.push(term, term, term, term, term, term, term, term, term, term, term);
       }
 
-      if (req.user.role !== 'admin') {
+      if (user.role !== 'admin') {
         ledgerConditions.push('(l.user_id = ? OR l.payee_user_id = ?)');
-        ledgerParams.push(req.user.userId, req.user.userId);
+        ledgerParams.push(user.userId, user.userId);
       }
 
       const ledgerWhere = ledgerConditions.length ? ` WHERE ${ledgerConditions.join(' AND ')}` : '';
@@ -7378,7 +7440,9 @@ app.get('/api/search', authenticateToken, async (req, res) => {
     // title, not a count — so the predicate goes in the WHERE clause rather than
     // being applied after the fact. `body` is deliberately NOT selected: it is
     // indexed for matching only and would otherwise ship legal text to clients.
-    if (type === 'all' || type === 'docs') {
+    if (indexed.docs) {
+      results.docs = indexed.docs;
+    } else if (type === 'all' || type === 'docs') {
       const docsSelect = `
         SELECT id, repo, path, collection, title, summary, access_url, github_url,
                word_count, doc_updated_at, updated_at`;
@@ -7386,7 +7450,7 @@ app.get('/api/search', authenticateToken, async (req, res) => {
       const docsParams = [];
       let docsScore = '';
 
-      if (req.user.role !== 'admin') {
+      if (user.role !== 'admin') {
         docsConditions.push("visibility = 'member'");
       }
 
@@ -7431,27 +7495,70 @@ app.get('/api/search', authenticateToken, async (req, res) => {
       results.docs = docs;
     }
 
+    if (connectedPromise) {
+      const connected = await connectedPromise;
+      results.connected = connected.items;
+      if (connected.error) results.connected_error = connected.error;
+    }
+    // Lets the client show the Connected tab even while another tab is selected.
+    if (retrievalSuite.enabled()) results.connected_enabled = true;
+    results.search_backend = Object.keys(indexed).length ? 'opensearch' : 'mysql';
+
     // Log search (only if there was a query)
-    if (req.user && q) {
+    if (user && q) {
       const totalResults = (results.posts?.length || 0) +
                           (results.comments?.length || 0) +
                           (results.users?.length || 0) +
                           (results.investments?.length || 0) +
                           (results.tasks?.length || 0) +
                           (results.ledger?.length || 0) +
-                          (results.docs?.length || 0);
+                          (results.docs?.length || 0) +
+                          (results.connected?.length || 0);
 
       await db.execute(
         'INSERT INTO search_history (user_id, query, results_count) VALUES (?, ?, ?)',
-        [req.user.userId, q, totalResults]
+        [user.userId, q, totalResults]
       );
     }
 
-    res.json(results);
+    return results;
+}
+
+app.get('/api/search', authenticateToken, async (req, res) => {
+  try {
+    res.json(await runSearch(req.user, req.query.q, req.query.type || 'all', {
+      includeConnected: req.query.connected !== '0',
+    }));
   } catch (error) {
     console.error('Search error:', error);
     res.status(500).json({ error: 'Search failed' });
   }
+});
+
+// Same search for integrations (e.g. a voice agent answering a member's
+// question). Results are those of the token's member, or of the acting user
+// for tokens allowed to act on behalf of a caller.
+app.get('/api/v1/search', authenticateApiToken, async (req, res) => {
+  if (!req.user) {
+    return res.status(403).json({ error: 'This API token is not linked to a member' });
+  }
+  try {
+    res.json(await runSearch(req.user, req.query.q, req.query.type || 'all'));
+  } catch (error) {
+    console.error('API search error:', error);
+    res.status(500).json({ error: 'Search failed' });
+  }
+});
+
+// Admin: which search backends are configured and what the index holds.
+app.get('/api/search-index/status', authenticateToken, requireAdmin, async (req, res) => {
+  const out = { connected_sources: retrievalSuite.enabled() };
+  try {
+    Object.assign(out, await searchIndex.status());
+  } catch (error) {
+    Object.assign(out, { enabled: true, error: error.message });
+  }
+  res.json(out);
 });
 
 // GitHub doc container page — the target of a `docs` search hit.

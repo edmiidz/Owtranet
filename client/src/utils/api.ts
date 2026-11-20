@@ -378,8 +378,12 @@ export const groupChatApi = {
 
 // Search API
 export const searchApi = {
-  search: async (query: string, type?: string): Promise<SearchResults> => {
-    const response = await api.get('/search', { params: { q: query, type } });
+  // includeConnected=false leaves connected sources out of a type 'all'
+  // search; SearchPage fetches them separately so they never slow the rest.
+  search: async (query: string, type?: string, includeConnected = true): Promise<SearchResults> => {
+    const params: Record<string, string | undefined> = { q: query, type };
+    if (!includeConnected) params.connected = '0';
+    const response = await api.get('/search', { params });
     return response.data;
   },
 };

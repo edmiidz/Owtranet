@@ -1,11 +1,11 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Search, User, FileText, MessageSquare, Filter, DollarSign, CheckSquare, Receipt, BookOpen, ExternalLink, Bot } from 'lucide-react';
+import { Search, User, FileText, MessageSquare, Filter, DollarSign, CheckSquare, Receipt, BookOpen, ExternalLink, Bot, Globe } from 'lucide-react';
 import { searchApi } from '../utils/api';
-import type { SearchResults, Post, User as UserType, Investment, Task, LedgerSearchResult, GithubDoc } from '../types';
+import type { SearchResults, Post, User as UserType, Investment, Task, LedgerSearchResult, GithubDoc, ConnectedSearchResult } from '../types';
 
-type SearchType = 'all' | 'posts' | 'users' | 'agents' | 'comments' | 'investments' | 'tasks' | 'ledger' | 'docs';
-const SEARCH_TYPES: SearchType[] = ['all', 'posts', 'users', 'agents', 'comments', 'investments', 'tasks', 'ledger', 'docs'];
+type SearchType = 'all' | 'posts' | 'users' | 'agents' | 'comments' | 'investments' | 'tasks' | 'ledger' | 'docs' | 'connected';
+const SEARCH_TYPES: SearchType[] = ['all', 'posts', 'users', 'agents', 'comments', 'investments', 'tasks', 'ledger', 'docs', 'connected'];
 
 // Where each indexed doc actually lives, for the provenance line on a result.
 // 'exec' rows only reach a client at all when the viewer is an admin — the
@@ -42,20 +42,58 @@ const SearchPage: React.FC = () => {
   const [error, setError] = useState<string>('');
   const [isInitialized, setIsInitialized] = useState(false);
 
+  // Connected sources (external systems via a Retrieval Suite) arrive in their
+  // own request so a slow source never holds up intranet results.
+  const [connectedEnabled, setConnectedEnabled] = useState(false);
+  const [connected, setConnected] = useState<ConnectedSearchResult[]>([]);
+  const [connectedLoading, setConnectedLoading] = useState(false);
+  const [connectedError, setConnectedError] = useState('');
+  // Only the latest search may write state; older responses are dropped.
+  const searchSeq = useRef(0);
+
   // Search function (handles both query and no-query cases)
   const performSearch = useCallback(async (searchQuery: string, type: string = 'all') => {
+    const seq = ++searchSeq.current;
+    const q = searchQuery.trim() || '';
     setIsLoading(true);
     setError('');
+    setConnected([]);
+    setConnectedError('');
+    setConnectedLoading(false);
 
+    let enabled = false;
     try {
       // Always call the API - it now handles empty queries by returning all results
-      const searchResults = await searchApi.search(searchQuery.trim() || '', type);
+      const searchResults = await searchApi.search(q, type, type === 'connected');
+      if (seq !== searchSeq.current) return;
       setResults(searchResults);
+      enabled = Boolean(searchResults.connected_enabled);
+      setConnectedEnabled(enabled);
+      if (type === 'connected') {
+        setConnected(searchResults.connected || []);
+        setConnectedError(searchResults.connected_error || '');
+      }
     } catch (err: any) {
+      if (seq !== searchSeq.current) return;
       setError('Failed to perform search');
       console.error('Search error:', err);
     } finally {
-      setIsLoading(false);
+      if (seq === searchSeq.current) setIsLoading(false);
+    }
+
+    if (enabled && q && type === 'all') {
+      setConnectedLoading(true);
+      try {
+        const res = await searchApi.search(q, 'connected');
+        if (seq !== searchSeq.current) return;
+        setConnected(res.connected || []);
+        setConnectedError(res.connected_error || '');
+      } catch (err: any) {
+        if (seq !== searchSeq.current) return;
+        setConnectedError('Connected sources are unavailable right now');
+      } finally {
+        if (seq === searchSeq.current) setConnectedLoading(false);
+      }
     }
   }, []);
 
@@ -112,7 +150,7 @@ const SearchPage: React.FC = () => {
     const ledgerCount = results.ledger?.length || 0;
     const docCount = results.docs?.length || 0;
     const agentCount = results.agents?.length || 0;
-    return postCount + userCount + commentCount + investmentCount + taskCount + ledgerCount + docCount + agentCount;
+    return postCount + userCount + commentCount + investmentCount + taskCount + ledgerCount + docCount + agentCount + connected.length;
   };
 
   const getFilteredUsers = () => {
@@ -310,6 +348,19 @@ const SearchPage: React.FC = () => {
             <BookOpen className="h-4 w-4 inline mr-1" />
             Docs ({results.docs?.length || 0})
           </button>
+          {connectedEnabled && (
+            <button
+              onClick={() => handleTypeChange('connected')}
+              className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                searchType === 'connected'
+                  ? 'bg-blue-500 text-white'
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              }`}
+            >
+              <Globe className="h-4 w-4 inline mr-1" />
+              Connected sources ({connectedLoading ? '…' : connected.length})
+            </button>
+          )}
         </div>
       </div>
 
@@ -338,7 +389,7 @@ const SearchPage: React.FC = () => {
       )}
 
       {/* No Results */}
-      {query && !isLoading && getTotalResults() === 0 && (
+      {query && !isLoading && !connectedLoading && getTotalResults() === 0 && (
         <div className="card p-8 text-center">
           <Search className="h-12 w-12 text-gray-400 mx-auto mb-4" />
           <p className="text-gray-600 text-lg">No results found for "{query}"</p>
@@ -711,6 +762,62 @@ const SearchPage: React.FC = () => {
                         Access now
                         <ExternalLink className="h-3.5 w-3.5 ml-1.5" />
                       </a>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Connected sources — documents in external systems (drives, wikis,
+              ticketing…) found through the Retrieval Suite, already limited to
+              what this member may open there. They open in the source system. */}
+          {connectedEnabled && query.trim() && (searchType === 'all' || searchType === 'connected') &&
+            (connectedLoading || connectedError || connected.length > 0) && (
+            <div className="card p-6">
+              <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
+                <Globe className="h-5 w-5 mr-2" />
+                Connected sources ({connectedLoading ? '…' : connected.length})
+              </h2>
+              {connectedLoading && (
+                <p className="text-sm text-gray-500">Searching connected sources…</p>
+              )}
+              {!connectedLoading && connectedError && (
+                <p className="text-sm text-amber-700">{connectedError}</p>
+              )}
+              <div className="space-y-4">
+                {!connectedLoading && connected.map((item) => (
+                  <div key={item.id} className="border border-gray-200 rounded-lg p-4 hover:bg-gray-50 transition-colors">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1 min-w-0">
+                        <h3 className="font-medium text-gray-900 mb-2">
+                          {item.url ? (
+                            <a href={item.url} target="_blank" rel="noopener noreferrer" className="hover:text-blue-600 transition-colors">
+                              {item.title}
+                            </a>
+                          ) : item.title}
+                        </h3>
+                        {item.teaser && (
+                          <p className="text-gray-600 text-sm mb-2">{item.teaser}</p>
+                        )}
+                        <div className="flex flex-wrap items-center text-xs text-gray-500 gap-x-4 gap-y-1">
+                          {item.source && (
+                            <span className="px-2 py-0.5 rounded-full font-medium bg-teal-100 text-teal-800">{item.source}</span>
+                          )}
+                          {item.modified && <span>{item.modified.slice(0, 10)}</span>}
+                        </div>
+                      </div>
+                      {item.url && (
+                        <a
+                          href={item.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex-shrink-0 inline-flex items-center px-3 py-2 bg-blue-500 text-white text-sm font-medium rounded-lg hover:bg-blue-600 transition-colors"
+                        >
+                          Open
+                          <ExternalLink className="h-3.5 w-3.5 ml-1.5" />
+                        </a>
+                      )}
                     </div>
                   </div>
                 ))}
