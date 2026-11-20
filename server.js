@@ -25,6 +25,7 @@ const { getRateToBase } = require('./server/lib/exchangeRates'); // base-currenc
 const { findMissing: findMissingSchema, formatReport: formatSchemaReport } = require('./server/lib/schemaCheck');
 const { EMAIL_NOTIFICATION_MODES, awayMinutes: emailNotifyAwayMinutes, touchUserActivity, checkEmailNotification } = require('./server/lib/emailNotifications');
 const { findUsersByEmail } = require('./server/lib/emailIdentity'); // Gmail dot-insensitive sign-in lookup
+const { visiblePostsWhere } = require('./server/lib/postVisibility');
 require('dotenv').config();
 
 if (!process.env.JWT_SECRET) {
@@ -7043,7 +7044,13 @@ app.get('/api/search', authenticateToken, async (req, res) => {
     const { q, type = 'all' } = req.query;
     
     const results = {};
-    
+
+    // Posts and comments obey the shared post-visibility rule: a member must
+    // never find a specific_members/author_only post (or a comment on one)
+    // they could not open. The predicate is applied in SQL so the hidden rows
+    // never leave the database.
+    const postVis = visiblePostsWhere('p', req.user.userId);
+
     // Search posts
     if (type === 'all' || type === 'posts') {
       let postsQuery, postsParams;
@@ -7068,6 +7075,7 @@ app.get('/api/search', authenticateToken, async (req, res) => {
             OR p.title LIKE ?
             OR p.content LIKE ?
           )
+          AND ${postVis.sql}
           ORDER BY relevance_score DESC, p.created_at DESC
           LIMIT 20`;
         postsParams = [
@@ -7078,16 +7086,18 @@ app.get('/api/search', authenticateToken, async (req, res) => {
           `%${q}%`,    // For content LIKE
           q,           // For WHERE MATCH AGAINST
           `%${q}%`,    // For WHERE title LIKE
-          `%${q}%`     // For WHERE content LIKE
+          `%${q}%`,    // For WHERE content LIKE
+          ...postVis.params
         ];
       } else {
-        // Return all posts when no query
+        // Return recent visible posts when no query
         postsQuery = `SELECT p.*, u.name as author_name, u.github_username
                      FROM posts p
                      JOIN users u ON p.user_id = u.id
+                     WHERE ${postVis.sql}
                      ORDER BY p.created_at DESC
                      LIMIT 20`;
-        postsParams = [];
+        postsParams = [...postVis.params];
       }
 
       const [posts] = await db.execute(postsQuery, postsParams);
@@ -7117,6 +7127,7 @@ app.get('/api/search', authenticateToken, async (req, res) => {
             MATCH(c.content) AGAINST(? IN NATURAL LANGUAGE MODE)
             OR c.content LIKE ?
           )
+          AND ${postVis.sql}
           ORDER BY relevance_score DESC, c.created_at DESC
           LIMIT 20`;
         commentsParams = [
@@ -7125,18 +7136,20 @@ app.get('/api/search', authenticateToken, async (req, res) => {
           q,           // For MATCH AGAINST (score)
           `%${q}%`,    // For content LIKE
           q,           // For WHERE MATCH AGAINST
-          `%${q}%`     // For WHERE content LIKE
+          `%${q}%`,    // For WHERE content LIKE
+          ...postVis.params
         ];
       } else {
-        // Return recent comments when no query
+        // Return recent comments on visible posts when no query
         commentsQuery = `SELECT c.*, p.title as post_title, p.slug as post_slug,
                         u.name as author_name, u.github_username
                        FROM comments c
                        JOIN posts p ON c.post_id = p.id
                        JOIN users u ON c.user_id = u.id
+                       WHERE ${postVis.sql}
                        ORDER BY c.created_at DESC
                        LIMIT 20`;
-        commentsParams = [];
+        commentsParams = [...postVis.params];
       }
 
       const [comments] = await db.execute(commentsQuery, commentsParams);
