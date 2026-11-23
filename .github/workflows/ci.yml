@@ -61,3 +61,8 @@ jobs:
           DB_HOST: 127.0.0.1
           DB_USER: root
         run: test/db/upgrade-test.sh
+      - name: Access test (sign-in and post visibility on read routes)
+        env:
+          DB_HOST: 127.0.0.1
+          DB_USER: root
+        run: test/db/access-test.sh
