@@ -24,6 +24,13 @@ distribution). Mobile fixes ship with the next app build.
 
 ### Added
 
+- **Publish your own build of the mobile app without editing `app.json`.** Keep your
+  bundle ID, Apple team, domain, icons and `google-services.json` in a folder outside
+  this repository and set `OWTRANET_INSTANCE=/path/to/it`; `mobile/app.config.js`
+  applies it on top of the placeholder `app.json`. `mobile/scripts/build-ios.sh
+  <folder> [--upload]` archives (and uploads to TestFlight) from the command line, and
+  `build-android-apk.sh` honours the same variable. See "Publishing your own build" in
+  `mobile/README.md`. The project itself still doesn't publish the app to the stores.
 - `mobile/scripts/distribute-android.sh` sends an Android build to testers through
   Firebase App Distribution. Configure it with `FIREBASE_ANDROID_APP_ID` (and
   optionally `FIREBASE_TESTER_GROUP`).
