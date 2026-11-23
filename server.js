@@ -25,6 +25,7 @@ const { getRateToBase } = require('./server/lib/exchangeRates'); // base-currenc
 const { findMissing: findMissingSchema, formatReport: formatSchemaReport } = require('./server/lib/schemaCheck');
 const { EMAIL_NOTIFICATION_MODES, awayMinutes: emailNotifyAwayMinutes, touchUserActivity, checkEmailNotification } = require('./server/lib/emailNotifications');
 const { findUsersByEmail } = require('./server/lib/emailIdentity'); // Gmail dot-insensitive sign-in lookup
+const { canUserViewPost } = require('./server/lib/postVisibility');
 require('dotenv').config();
 
 if (!process.env.JWT_SECRET) {
@@ -4332,10 +4333,11 @@ app.delete('/api/posts/:id', authenticateToken, async (req, res) => {
 });
 
 // Get post by ID (for editing)
-app.get('/api/posts/id/:id', async (req, res) => {
+app.get('/api/posts/id/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
-    
+    const userId = req.user.userId;
+
     const [posts] = await db.execute(`
       SELECT p.*, u.name as author_name, u.github_username, u.avatar_url
       FROM posts p
@@ -4348,7 +4350,18 @@ app.get('/api/posts/id/:id', async (req, res) => {
     }
     
     const post = posts[0];
-    
+
+    // Same rule as GET /api/posts/:slug: visibility, plus co-editors always.
+    if (!(await canUserViewPost(db, post, userId))) {
+      const [editor] = await db.execute(
+        'SELECT 1 FROM post_editors WHERE post_id = ? AND user_id = ? LIMIT 1',
+        [post.id, userId]
+      );
+      if (editor.length === 0) {
+        return res.status(404).json({ error: 'Post not found' }); // hide that it exists
+      }
+    }
+
     // Get tags
     const [tags] = await db.execute(`
       SELECT t.id, t.name, t.slug
@@ -6400,7 +6413,7 @@ app.post('/api/exchange-rates/fetch', authenticateToken, requireAdmin, async (re
 // ===================== USER PROFILE ENDPOINTS =====================
 
 // Get user profile
-app.get('/api/users/:username', async (req, res, next) => {
+app.get('/api/users/:username', authenticateToken, async (req, res, next) => {
   try {
     const { username } = req.params;
 
@@ -6967,7 +6980,7 @@ app.post('/api/github/sync', authenticateToken, requireAdmin, async (req, res) =
 });
 
 // Get user's GitHub issues
-app.get('/api/github/issues/:username', async (req, res) => {
+app.get('/api/github/issues/:username', authenticateToken, async (req, res) => {
   try {
     const { username } = req.params;
     
@@ -11447,7 +11460,7 @@ app.delete('/api/admin/users/:userId', authenticateToken, requireAdmin, async (r
 // ===================== QUICKLINKS ENDPOINTS =====================
 
 // Get all quicklinks
-app.get('/api/quicklinks', async (req, res) => {
+app.get('/api/quicklinks', authenticateToken, async (req, res) => {
   try {
     const [quicklinks] = await db.execute(
       'SELECT * FROM quicklinks WHERE is_active = 1 ORDER BY display_order ASC, id ASC'

@@ -5,6 +5,22 @@ upgrade needs. To upgrade any instance from any earlier version, follow
 [Upgrading an existing instance](README.md#upgrading-an-existing-instance):
 `node scripts/check-schema.js` names every migration your database still needs.
 
+## Unreleased
+
+### Upgrade steps
+
+No migrations and no new settings.
+
+### Fixes
+
+- **Read routes that skipped sign-in now require it.** Member profiles
+  (`GET /api/users/:username`, including `id:N` lookups), posts by id
+  (`GET /api/posts/id/:id`), quick links and GitHub issues could be read
+  without signing in. Posts by id now also follow post visibility, as the
+  forum does: author-only and specific-member posts return 404 to anyone else.
+  The web and mobile apps already send a token on these calls, so nothing
+  changes for members. Covered by the new `test/db/access-test.sh` in CI.
+
 ## 1.1.1 — 2026-11-18
 
 ### Upgrade steps (from 1.1.0)
