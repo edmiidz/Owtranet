@@ -20,6 +20,14 @@ No migrations and no new settings.
   forum does: author-only and specific-member posts return 404 to anyone else.
   The web and mobile apps already send a token on these calls, so nothing
   changes for members. Covered by the new `test/db/access-test.sh` in CI.
+### Fixes
+
+- **Mobile app stuck on error screens after the session expired.** The server
+  answers an expired or invalid sign-in with 403 "Invalid or expired token", but
+  the app only signed out on 401, so every screen showed an error with a Retry
+  that could never work. The app now signs that account out (or switches to the
+  next signed-in account), as the web client already did. Other 403s, such as
+  permission denials, still keep you signed in. Ships with the next app build.
 
 ## 1.1.1 — 2026-11-18
 

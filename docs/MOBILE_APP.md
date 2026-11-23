@@ -169,8 +169,10 @@ npx expo run:android
   launch. `src/lib/accounts.ts` does the switch: it stops the radio, clears badges and
   **unregisters the push token with the outgoing account's server**, and the root layout
   then registers it with the new one. So **only the active account gets pushes**. The
-  `(app)` stack is keyed by account, so every screen remounts. A 401 only signs out the
-  account whose token it was sent with. Still open (phase 2 in #6): pushes for
+  `(app)` stack is keyed by account, so every screen remounts. An expired session (401,
+  or 403 "Invalid or expired token"; see `isSessionExpired()` in `src/api/client.ts`)
+  only signs out the account whose token it was sent with; other 403s keep the session.
+  Still open (phase 2 in #6): pushes for
   inactive accounts, universal links per instance domain, and generic vs. per-org app
   identity.
 - The `pending_agreement` 403 (`requiresAgreement`) routes to an in-app signing screen.
