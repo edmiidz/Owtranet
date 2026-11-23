@@ -191,6 +191,48 @@ npx expo run:android
 - Radio playback uses `expo-speech`. iOS background audio mode is declared in
   `app.json`; Android cannot pause TTS mid-utterance so pause restarts the segment.
 
+## Android release builds and tester distribution
+
+Build an APK (or `--aab` for Google Play) on any Mac without Android Studio; the
+prerequisites (Node, JDK 17, Android SDK) are in the script header:
+
+```bash
+cd mobile
+./scripts/build-android-apk.sh --arm64          # → dist/intranet-<version>-<code>.apk
+```
+
+`--arm64` covers every real phone and avoids running out of memory when compiling all four
+ABIs on a 16 GB machine. Sign with your upload key (see the script header) so each build
+installs over the previous one.
+
+**Distributing to testers** (Firebase App Distribution, free, the Android counterpart of
+TestFlight):
+
+```bash
+export FIREBASE_ANDROID_APP_ID=1:123456789012:android:0123456789abcdef   # Firebase → Project settings → Your apps
+export FIREBASE_TESTER_GROUP=testers                                     # optional, default "testers"
+./scripts/distribute-android.sh dist/intranet-1.0.0-14.apk notes.txt          # upload only
+./scripts/distribute-android.sh dist/intranet-1.0.0-14.apk notes.txt --send   # + email the group
+```
+
+It calls the App Distribution REST API with `gcloud auth print-access-token`, so only `gcloud`
+(logged in as an account with access to the Firebase project) is needed, not the `firebase`
+CLI. Add testers in the Firebase console → App Distribution → Testers & Groups; they get an
+email, install **Firebase App Tester** and are prompted for each new build. Google Play
+internal testing (`--aab`) is the other free route but needs a Play Console listing.
+
+**Pinned LiveKit versions.** `@livekit/react-native-webrtc` is pinned to exactly `144.1.2`
+(plus an npm `overrides` entry) and `@livekit/react-native-expo-plugin` to `~1.1.0`:
+- webrtc 144.2.0 moved its Java classes to `livekit.org.webrtc`, but `@livekit/react-native` 2.x
+  still imports `org.webrtc`, so the Android compile fails
+  (`Argument type mismatch: livekit.org.webrtc.EglBase.Context`). iOS keeps building, so this
+  is easy to miss.
+- expo-plugin 1.2.0 requires `@livekit/react-native` 3.x, so a fresh `npm install` fails on
+  the peer-dependency check.
+
+The fix upstream is `@livekit/react-native` 3.x, but `@elevenlabs/react-native` 1.2.x only
+accepts `^2.12.0`. Unpin all three together once ElevenLabs supports LiveKit 3.
+
 ## Push notifications (Android: FCM HTTP v1 · iOS: APNs direct)
 
 Delivery goes **straight from our server** to the platform push service — no Expo push
