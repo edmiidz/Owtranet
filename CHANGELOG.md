@@ -100,6 +100,17 @@ opening a direct message thread or group channel fails.
   deleted messages can't be edited, and an edit doesn't send new notifications,
   mentions or AI agent replies. API: `PUT /api/messages/:id` and
   `PUT /api/group-chat/:groupId/messages/:id`, body `{ "content": "…" }`.
+### Fixes
+
+- **ElevenLabs tool sync updates every agent that uses the intranet tools**
+  (#45). `server/scripts/syncElevenLabsAgentTools.js` only gave new tools to
+  `ELEVENLABS_AGENT_ID`, so other voice agents sharing the toolset (for example
+  for the channel tools) never got them and told members they couldn't do things
+  the API supports. It now also adds any missing intranet tools to every agent
+  that already uses one of them, and to agents listed in the new optional
+  `ELEVENLABS_EXTRA_AGENT_IDS`, without changing their prompts. An agent that
+  can't be updated is reported and skipped (the script then exits non-zero).
+  Re-run the script after upgrading if you have more than one agent.
 
 ## 1.1.1 — 2026-11-18
 

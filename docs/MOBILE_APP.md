@@ -95,6 +95,11 @@ webhook tools call this server's token-authenticated `/api/v1/*` endpoints
 (forum posts, member directory, tasks, direct messages — see `docs/WEBHOOK_API.md`). The
 tools, prompt and API secret are defined in `server/scripts/syncElevenLabsAgentTools.js`;
 re-run it (on the box, it reads `.env`) after changing the agent or the v1 API.
+It also brings your other ElevenLabs agents up to date: any agent that already uses one
+of the intranet tools, plus any listed in `ELEVENLABS_EXTRA_AGENT_IDS` (comma-separated),
+gets the intranet tools it is missing, without its prompt being changed. An agent that
+can't be updated is reported and skipped, and the script exits non-zero. `--dry-run`
+lists what each agent would gain.
 
 How a call works:
 1. App → `POST /api/mobile/ai/session` (JWT). The server mints a single-use conversation token
