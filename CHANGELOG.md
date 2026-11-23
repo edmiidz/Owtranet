@@ -86,6 +86,20 @@ No migrations and no new settings.
 - `mobile/scripts/distribute-android.sh` sends an Android build to testers through
   Firebase App Distribution. Configure it with `FIREBASE_ANDROID_APP_ID` (and
   optionally `FIREBASE_TESTER_GROUP`).
+Apply `server/migrations/add_message_edits.sql` **before** deploying the new
+server: the message endpoints read the new `edited_at` columns, so without it
+opening a direct message thread or group channel fails.
+`node scripts/check-schema.js` names it (`./deploy.sh` runs that check for you).
+
+### Added
+
+- **Edit your own direct and group chat messages** (#38). On the web, a pencil
+  on your own message opens an inline editor; in the mobile app, long-press →
+  Edit puts the text in the composer and Send becomes Save. Everyone in the
+  thread sees "(edited)", with the edit time on hover. Only the sender can edit,
+  deleted messages can't be edited, and an edit doesn't send new notifications,
+  mentions or AI agent replies. API: `PUT /api/messages/:id` and
+  `PUT /api/group-chat/:groupId/messages/:id`, body `{ "content": "…" }`.
 
 ## 1.1.1 — 2026-11-18
 

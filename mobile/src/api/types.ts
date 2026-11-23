@@ -42,7 +42,7 @@ export interface Conversation {
 
 export interface DirectMessage {
   id: number; conversation_id: number; sender_id: number; recipient_id: number; content: string; content_html?: string;
-  is_read: boolean | number; created_at: string; sender_name: string; sender_avatar?: string | null; deleted_at?: string | null;
+  is_read: boolean | number; created_at: string; edited_at?: string | null; sender_name: string; sender_avatar?: string | null; deleted_at?: string | null;
   reply_to_id?: number | null; reply_to_content?: string | null; reply_to_sender_name?: string | null;
   total_likes?: number | string; user_vote?: number;
 }
@@ -54,7 +54,7 @@ export interface Group {
 
 export interface GroupChatMessage {
   id: number; group_id: number; sender_id: number; content: string; content_html?: string; message_type: 'text' | 'file' | 'system';
-  reply_to_id?: number | null; is_edited: boolean | number; is_deleted: boolean | number; created_at: string;
+  reply_to_id?: number | null; is_edited: boolean | number; edited_at?: string | null; is_deleted: boolean | number; created_at: string;
   sender_name: string; sender_avatar_url?: string | null; reply_to_content?: string | null; reply_to_sender_name?: string | null;
   total_likes?: number; user_liked?: boolean | number;
 }

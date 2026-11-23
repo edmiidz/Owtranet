@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, useLayoutEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import ForumContent from '../components/ForumContent';
+import MessageEditForm, { editedTitle } from '../components/MessageEditForm';
 import {
   Users,
   Send,
@@ -11,7 +12,8 @@ import {
   Reply,
   X,
   ArrowDown,
-  ArrowLeft
+  ArrowLeft,
+  Pencil
 } from 'lucide-react';
 import { groupChatApi } from '../utils/api';
 import { notifyBadgesChanged } from '../utils/badges';
@@ -27,7 +29,7 @@ const STICKY_THRESHOLD_PX = 80;
 // re-render (and re-layout) every message bubble.
 const fingerprint = (list: GroupChatMessage[]): string =>
   list
-    .map(m => `${m.id}:${m.total_likes ?? 0}:${m.user_liked ? 1 : 0}:${m.is_edited ? 1 : 0}:${m.updated_at}`)
+    .map(m => `${m.id}:${m.total_likes ?? 0}:${m.user_liked ? 1 : 0}:${m.is_edited ? 1 : 0}:${m.edited_at ?? ''}:${m.updated_at}`)
     .join('|');
 
 const formatWhen = (iso: string): string => {
@@ -58,6 +60,7 @@ const GroupChatPage: React.FC = () => {
 
   const [draft, setDraft] = useState('');
   const [replyTo, setReplyTo] = useState<GroupChatMessage | null>(null);
+  const [editingId, setEditingId] = useState<number | null>(null);
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState('');
   const [isUploading, setIsUploading] = useState(false);
@@ -290,6 +293,16 @@ const GroupChatPage: React.FC = () => {
     textareaRef.current?.focus();
   };
 
+  const saveEdit = async (messageId: number, content: string) => {
+    if (!selectedGroup) return;
+    const result = await groupChatApi.editMessage(selectedGroup.id, messageId, content);
+    if (result.data) {
+      const updated = result.data;
+      setMessages(prev => prev.map(msg => (msg.id === messageId ? { ...msg, ...updated } : msg)));
+    }
+    setEditingId(null);
+  };
+
   // ---- Render ---------------------------------------------------------------
 
   if (!groupsLoaded) {
@@ -463,8 +476,12 @@ const GroupChatPage: React.FC = () => {
                                 </span>
                                 <span className="text-xs text-gray-500" title={new Date(message.created_at).toLocaleString()}>
                                   {formatWhen(message.created_at)}
-                                  {message.is_edited ? ' · edited' : ''}
                                 </span>
+                                {message.is_edited && (
+                                  <span className="text-xs text-gray-400 italic" title={editedTitle(message.edited_at)}>
+                                    (edited)
+                                  </span>
+                                )}
                               </div>
                               {message.reply_to_content && (
                                 <div className="bg-gray-100 border-l-2 border-gray-300 pl-3 py-2 mb-2 text-sm text-gray-600">
@@ -472,10 +489,20 @@ const GroupChatPage: React.FC = () => {
                                   <p className="truncate">{message.reply_to_content}</p>
                                 </div>
                               )}
-                              <ForumContent
-                                content={message.content_html || message.content}
-                                className="prose prose-sm max-w-none"
-                              />
+                              {editingId === message.id ? (
+                                <MessageEditForm
+                                  initialContent={message.content}
+                                  maxLength={MAX_MESSAGE_LENGTH}
+                                  onSave={(content) => saveEdit(message.id, content)}
+                                  onCancel={() => setEditingId(null)}
+                                />
+                              ) : (
+                                <ForumContent
+                                  content={message.content_html || message.content}
+                                  className="prose prose-sm max-w-none"
+                                />
+                              )}
+                              {editingId !== message.id && (
                               <div className="flex items-center space-x-1 mt-2 -mb-1">
                                 <button
                                   onClick={() => likeMessage(message.id)}
@@ -499,7 +526,18 @@ const GroupChatPage: React.FC = () => {
                                   <Reply className="h-3.5 w-3.5" />
                                   <span>Reply</span>
                                 </button>
+                                {mine && (
+                                  <button
+                                    onClick={() => setEditingId(message.id)}
+                                    className="flex items-center space-x-1 text-xs px-2 py-1 rounded-full text-gray-400 hover:text-blue-500 hover:bg-gray-100 transition-colors"
+                                    title="Edit message"
+                                  >
+                                    <Pencil className="h-3.5 w-3.5" />
+                                    <span>Edit</span>
+                                  </button>
+                                )}
                               </div>
+                              )}
                             </div>
                           </div>
                         </div>

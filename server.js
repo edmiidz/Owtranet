@@ -5032,7 +5032,7 @@ app.get('/api/group-chat/:groupId/messages', authenticateToken, async (req, res)
     // Get messages with sender information and like counts
     const [messages] = await db.execute(
       `SELECT gm.id, gm.group_id, gm.sender_id, gm.content, gm.content_html,
-              gm.message_type, gm.reply_to_id, gm.is_edited, gm.is_deleted,
+              gm.message_type, gm.reply_to_id, gm.is_edited, gm.edited_at, gm.is_deleted,
               gm.created_at, gm.updated_at,
               u.name as sender_name,
               u.github_username as sender_github_username,
@@ -5112,6 +5112,52 @@ app.post('/api/group-chat/:groupId/messages', authenticateToken, [
   } catch (error) {
     console.error('Send group message error:', error);
     res.status(500).json({ error: 'Failed to send group message' });
+  }
+});
+
+// Edit your own group chat message. Mentions/agents are not re-triggered;
+// the message is flagged so every reader sees "(edited)".
+app.put('/api/group-chat/:groupId/messages/:messageId', authenticateToken, [
+  body('content').trim().isLength({ min: 1, max: 2000 })
+], async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ errors: errors.array() });
+  }
+
+  try {
+    const groupId = parseInt(req.params.groupId);
+    const messageId = parseInt(req.params.messageId);
+
+    const [rows] = await db.execute(
+      'SELECT id, sender_id, content FROM group_messages WHERE id = ? AND group_id = ? AND is_deleted = 0',
+      [messageId, groupId]
+    );
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Message not found' });
+    }
+    if (rows[0].sender_id !== req.user.userId) {
+      return res.status(403).json({ error: 'You can only edit your own messages' });
+    }
+
+    const { content } = req.body;
+    if (content === rows[0].content) {
+      return res.json({ success: true, unchanged: true });
+    }
+    const contentHtml = markdownToHtml(content);
+    await db.execute(
+      'UPDATE group_messages SET content = ?, content_html = ?, is_edited = 1, edited_at = NOW() WHERE id = ?',
+      [content, contentHtml, messageId]
+    );
+    const [[updated]] = await db.execute(
+      'SELECT content, content_html, is_edited, edited_at, updated_at FROM group_messages WHERE id = ?',
+      [messageId]
+    );
+
+    res.json({ success: true, data: { id: messageId, ...updated, is_edited: !!updated.is_edited } });
+  } catch (error) {
+    console.error('Edit group message error:', error);
+    res.status(500).json({ error: 'Failed to edit message' });
   }
 });
 
@@ -7833,6 +7879,7 @@ app.get('/api/messages/conversations/:conversationId', authenticateToken, async 
         dm.deleted_at,
         dm.deleted_by,
         dm.created_at,
+        dm.edited_at,
         dm.reply_to_id,
         u.name as sender_name,
         u.github_username as sender_github,
@@ -8226,6 +8273,50 @@ app.post('/api/messages/:messageId/like', authenticateToken, async (req, res) =>
   } catch (error) {
     console.error('Like message error:', error);
     res.status(500).json({ error: 'Failed to like message' });
+  }
+});
+
+// Edit your own direct message. The recipient is not re-notified; the message
+// is flagged so both participants see "(edited)".
+app.put('/api/messages/:messageId', authenticateToken, [
+  body('content').trim().isLength({ min: 1, max: 2000 })
+], async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ errors: errors.array() });
+  }
+
+  try {
+    const messageId = parseInt(req.params.messageId);
+    const [rows] = await db.execute(
+      'SELECT id, sender_id, content, deleted_at FROM direct_messages WHERE id = ?',
+      [messageId]
+    );
+    if (rows.length === 0 || rows[0].deleted_at) {
+      return res.status(404).json({ error: 'Message not found' });
+    }
+    if (rows[0].sender_id !== req.user.userId) {
+      return res.status(403).json({ error: 'You can only edit your own messages' });
+    }
+
+    const { content } = req.body;
+    if (content === rows[0].content) {
+      return res.json({ success: true, unchanged: true });
+    }
+    const contentHtml = markdownToHtml(content);
+    await db.execute(
+      'UPDATE direct_messages SET content = ?, content_html = ?, edited_at = NOW() WHERE id = ?',
+      [content, contentHtml, messageId]
+    );
+    const [[updated]] = await db.execute(
+      'SELECT content, content_html, edited_at FROM direct_messages WHERE id = ?',
+      [messageId]
+    );
+
+    res.json({ success: true, data: { id: messageId, ...updated } });
+  } catch (error) {
+    console.error('Edit message error:', error);
+    res.status(500).json({ error: 'Failed to edit message' });
   }
 });
 
