@@ -58,6 +58,18 @@ No migrations and no new settings.
   `GET /api/messages/conversations/:id` accepts optional `limit` (max 200) and
   `before_id`; without them it returns the full history as before, so the
   mobile app and other API clients are unaffected.
+### Fixes
+
+- **Agreements: members are no longer sent to a team agreement that doesn't
+  apply to them** (#39). The profile page told every member without a signed
+  team agreement "You must sign the team agreement" and linked to `/agreement`,
+  even when their agreements are assigned individually, which could lead someone
+  to sign the wrong one. The profile now lists only agreements actually assigned
+  to you that still need signing, each linking to its own page; voided
+  signatures are shown greyed out with a "voided" badge. `/agreement` sends
+  members with individual assignments to their pending one (or the dashboard),
+  and shows "No agreement required" instead of an error when no team agreement
+  is active.
 
 ## 1.1.1 — 2026-11-18
 
