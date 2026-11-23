@@ -19,6 +19,7 @@ const { EmailManager, EmailCrypto } = require('./emailUtils');
 const { analyzeDocument } = require('./utils/aiAnalyzer');
 const fieldCrypto = require('./utils/fieldCrypto');
 const { createAgentResponder, extractMentionTokens } = require('./server/lib/aiAgents');
+const { createAudit } = require('./server/lib/audit');
 const { instancePublicDir, createPluginRouter, loadPlugins } = require('./server/lib/plugins');
 const memberActivity = require('./server/lib/memberActivity'); // GET /api/v1/activity
 const { getRateToBase } = require('./server/lib/exchangeRates'); // base-currency-aware rates
@@ -153,6 +154,12 @@ app.options('*', cors());
 // Body parsing middleware
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+// Audit trail (docs/AUDIT_TRAIL.md): changes → audit_log, reads + searches →
+// access_log. Acts on response finish, so it sees req.user set by the route's
+// auth middleware. `db` is resolved lazily because the pool is created later.
+const audit = createAudit({ getDb: () => db });
+app.use(audit.middleware());
 
 // Universal links (iOS) / app links (Android) for the mobile app, so a tapped
 // https://<this host>/forum/post/x opens the native screen. Served from here
@@ -4187,6 +4194,11 @@ app.put('/api/posts/:id', authenticateToken, [
 
     await db.execute(updateQuery, updateParams);
 
+    const [oldTagRows] = await db.execute(
+      'SELECT t.name FROM post_tags pt JOIN tags t ON t.id = pt.tag_id WHERE pt.post_id = ? ORDER BY t.name',
+      [id]
+    );
+
     // Clear existing tags
     await db.execute('DELETE FROM post_tags WHERE post_id = ?', [id]);
 
@@ -4267,6 +4279,19 @@ app.put('/api/posts/:id', authenticateToken, [
       }
     }
 
+    await audit.change(req, {
+      action: 'post.update', entityType: 'post', entityId: id,
+      changes: audit.diff(
+        { ...post, tags: oldTagRows.map(t => t.name).filter(n => n !== 'file').sort() },
+        {
+          title, content, visibility,
+          attachment_original_name: remove_attachment ? null : (attachment_original_name || post.attachment_original_name),
+          ...(Array.isArray(tags) ? { tags: [...tags].sort() } : {})
+        }
+      ),
+      metadata: { slug: post.slug, author_id: post.user_id }
+    });
+
     // Process mentions when post is edited
     await processMentions(content, 'post', parseInt(id), req.user.userId, req.user);
     // An agent tagged by this edit is brought in; one already answered is not
@@ -4321,6 +4346,11 @@ app.delete('/api/posts/:id', authenticateToken, async (req, res) => {
     await db.execute('DELETE FROM posts WHERE id = ?', [id]);
 
     console.log(`Post ${id} ("${post.title}") deleted by user ${req.user.userId} (${req.user.role})`);
+    await audit.change(req, {
+      action: 'post.delete', entityType: 'post', entityId: id,
+      metadata: { snapshot: { title: post.title, slug: post.slug, author_id: post.user_id,
+        visibility: post.visibility, content: post.content, created_at: post.created_at } }
+    });
 
     res.json({ 
       message: 'Post deleted successfully',
@@ -4851,7 +4881,7 @@ app.put('/api/comments/:id', authenticateToken, [
 
     // Check if comment exists and user has permission
     const [comments] = await db.execute(
-      'SELECT user_id FROM comments WHERE id = ?',
+      'SELECT user_id, post_id, content FROM comments WHERE id = ?',
       [id]
     );
 
@@ -4872,6 +4902,11 @@ app.put('/api/comments/:id', authenticateToken, [
       'UPDATE comments SET content = ?, content_html = ?, updated_at = NOW() WHERE id = ?',
       [content, contentHtml, id]
     );
+    await audit.change(req, {
+      action: 'comment.update', entityType: 'comment', entityId: id,
+      changes: audit.diff(comment, { content }),
+      metadata: { post_id: comment.post_id, author_id: comment.user_id }
+    });
 
     res.json({ message: 'Comment updated successfully' });
   } catch (error) {
@@ -4887,7 +4922,7 @@ app.delete('/api/comments/:id', authenticateToken, async (req, res) => {
 
     // Check if comment exists and user has permission
     const [comments] = await db.execute(
-      'SELECT user_id, post_id FROM comments WHERE id = ?',
+      'SELECT user_id, post_id, content, created_at FROM comments WHERE id = ?',
       [id]
     );
 
@@ -4911,6 +4946,11 @@ app.delete('/api/comments/:id', authenticateToken, async (req, res) => {
     
     // Finally delete the comment
     await db.execute('DELETE FROM comments WHERE id = ?', [id]);
+    await audit.change(req, {
+      action: 'comment.delete', entityType: 'comment', entityId: id,
+      metadata: { post_id: comment.post_id, snapshot: { author_id: comment.user_id,
+        content: comment.content, created_at: comment.created_at } }
+    });
 
     res.json({ message: 'Comment deleted successfully' });
   } catch (error) {
@@ -5720,6 +5760,13 @@ app.post('/api/deliverables/:id/adjust', authenticateToken, requireAdmin, async 
       // Commit transaction
       await db.query('COMMIT');
 
+      await audit.change(req, {
+        action: 'deliverable.adjust', entityType: 'deliverable', entityId: id,
+        changes: { [fieldName]: { old: oldValue, new: new_value },
+          ...(fieldName !== 'amount' ? { amount: { old: deliverable.amount, new: newAmount } } : {}) },
+        reason, metadata: { owner_id: deliverable.user_id, adjustment_type }
+      });
+
       // Add notification for the user
       await db.execute(
         'INSERT INTO notifications (user_id, type, title, message) VALUES (?, ?, ?, ?)',
@@ -5787,7 +5834,7 @@ app.put('/api/deliverables/:id', authenticateToken, async (req, res) => {
 
     // Check permissions
     const [deliverables] = await db.execute(
-      'SELECT user_id, status FROM deliverables WHERE id = ?',
+      'SELECT * FROM deliverables WHERE id = ?',
       [id]
     );
 
@@ -5899,9 +5946,19 @@ app.put('/api/deliverables/:id', authenticateToken, async (req, res) => {
 
     // Notify user
     const [updatedDeliverables] = await db.execute(
-      'SELECT user_id, title FROM deliverables WHERE id = ?',
+      'SELECT * FROM deliverables WHERE id = ?',
       [id]
     );
+
+    if (updatedDeliverables.length > 0) {
+      await audit.change(req, {
+        action: status && status !== deliverable.status ? `deliverable.${status}` : 'deliverable.update',
+        entityType: 'deliverable', entityId: id,
+        changes: audit.diff(deliverable, updatedDeliverables[0], DELIVERABLE_AUDIT_FIELDS),
+        reason: rejection_reason || null,
+        metadata: { owner_id: deliverable.user_id }
+      });
+    }
 
     if (updatedDeliverables.length > 0) {
       await db.execute(
@@ -5921,6 +5978,20 @@ app.put('/api/deliverables/:id', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Failed to update deliverable' });
   }
 });
+
+// What audit_log keeps of a deleted deliverable
+function deliverableSnapshot(d) {
+  const snap = {};
+  for (const k of ['user_id', 'type', 'title', 'status', 'amount', 'original_amount', 'original_currency',
+    'exchange_rate', 'risk_multiplier', 'content', 'investment_category', 'created_at']) {
+    if (k in d) snap[k] = d[k];
+  }
+  return snap;
+}
+
+// Columns whose old/new values go into audit_log on a deliverable edit
+const DELIVERABLE_AUDIT_FIELDS = ['status', 'amount', 'original_amount', 'original_currency', 'exchange_rate',
+  'risk_multiplier', 'rejection_reason', 'nominee_user_id', 'content', 'investment_category', 'title', 'approved_by'];
 
 // Upload and analyze document for deliverable
 app.post('/api/deliverables/analyze-document', authenticateToken, (req, res, next) => {
@@ -6092,7 +6163,7 @@ app.delete('/api/deliverables/:id', authenticateToken, async (req, res) => {
 
     // Get deliverable details
     const [deliverables] = await db.execute(
-      'SELECT user_id, status, title FROM deliverables WHERE id = ?',
+      'SELECT * FROM deliverables WHERE id = ?',
       [id]
     );
 
@@ -6117,6 +6188,10 @@ app.delete('/api/deliverables/:id', authenticateToken, async (req, res) => {
 
     // Delete the deliverable
     await db.execute('DELETE FROM deliverables WHERE id = ?', [id]);
+    await audit.change(req, {
+      action: 'deliverable.delete', entityType: 'deliverable', entityId: id,
+      metadata: { snapshot: deliverableSnapshot(deliverable) }
+    });
 
     res.json({
       success: true,
@@ -6621,6 +6696,8 @@ app.put('/api/users/:userId', authenticateToken, async (req, res) => {
       }
     }
     
+    const [profileBefore] = await db.execute('SELECT * FROM users WHERE id = ?', [userId]);
+
     // Update user profile (only update email if provided)
     if (email && email.trim()) {
       await db.execute(
@@ -6633,7 +6710,15 @@ app.put('/api/users/:userId', authenticateToken, async (req, res) => {
         [other_emails?.trim() || null, bio, department, position, company, intranet_username?.trim() || null, github_username?.trim() || null, calendar_link?.trim() || null, email_notification_preference || 'company', emailNotificationModeValue, agent_embed_code?.trim() || null, emailProviderValue, userId]
       );
     }
-    
+
+    const [profileAfter] = await db.execute('SELECT * FROM users WHERE id = ?', [userId]);
+    await audit.change(req, {
+      action: 'profile.update', entityType: 'user', entityId: userId,
+      changes: audit.diff(profileBefore[0], profileAfter[0], ['email', 'other_emails', 'bio', 'department', 'position',
+        'company', 'intranet_username', 'github_username', 'calendar_link', 'email_notification_preference',
+        'email_notification_mode', 'agent_embed_code', 'email_provider'])
+    });
+
     res.json({ message: 'Profile updated' });
   } catch (error) {
     console.error('Update profile error:', error);
@@ -9057,6 +9142,14 @@ app.put('/api/v1/forum/posts/:id', authenticateApiToken, [
 
     // Log the API usage
     console.log(`API Post updated: "${existingPost.title}" via ${req.apiToken.name}`);
+    const [updatedPosts] = await db.execute('SELECT title, content, visibility FROM posts WHERE id = ?', [postId]);
+    await audit.change(req, {
+      action: 'post.update', entityType: 'post', entityId: postId,
+      changes: audit.diff(existingPost, { ...(updatedPosts[0] || {}), ...(tags !== undefined ? { tags } : {}) },
+        ['title', 'content', 'visibility']),
+      metadata: { slug: existingPost.slug, author_id: existingPost.user_id,
+        ...(tags !== undefined ? { tags } : {}) }
+    });
 
     res.json({
       success: true,
@@ -9990,6 +10083,16 @@ app.put('/api/v1/deliverables/:id', authenticateApiToken, [
 
     // Log the API usage
     console.log(`API Deliverable updated: "${existingDeliverable.title}" via ${req.apiToken.name}`);
+    const [updatedDeliverables] = await db.execute('SELECT * FROM deliverables WHERE id = ?', [deliverableId]);
+    if (updatedDeliverables.length > 0) {
+      await audit.change(req, {
+        action: req.body.status && req.body.status !== existingDeliverable.status
+          ? `deliverable.${req.body.status}` : 'deliverable.update',
+        entityType: 'deliverable', entityId: deliverableId,
+        changes: audit.diff(existingDeliverable, updatedDeliverables[0], DELIVERABLE_AUDIT_FIELDS),
+        metadata: { owner_id: existingDeliverable.user_id, ...(tags !== undefined ? { tags } : {}) }
+      });
+    }
 
     res.json({
       success: true,
@@ -10048,6 +10151,10 @@ app.delete('/api/v1/deliverables/:id', authenticateApiToken, async (req, res) =>
 
     // Log the API usage
     console.log(`API Deliverable deleted: "${existingDeliverable.title}" via ${req.apiToken.name}`);
+    await audit.change(req, {
+      action: 'deliverable.delete', entityType: 'deliverable', entityId: deliverableId,
+      metadata: { snapshot: deliverableSnapshot(existingDeliverable) }
+    });
 
     res.json({
       success: true,
@@ -10219,6 +10326,11 @@ app.put('/api/v1/comments/:id', authenticateApiToken, [
 
     // Log the API usage
     console.log(`API Comment updated: ID ${commentId} via ${req.apiToken.name}`);
+    await audit.change(req, {
+      action: 'comment.update', entityType: 'comment', entityId: commentId,
+      changes: audit.diff(existingComment, { content }),
+      metadata: { post_id: existingComment.post_id, author_id: existingComment.user_id }
+    });
 
     res.json({
       success: true,
@@ -10283,6 +10395,11 @@ app.delete('/api/v1/comments/:id', authenticateApiToken, async (req, res) => {
 
     // Log the API usage
     console.log(`API Comment deleted: ID ${commentId} via ${req.apiToken.name}`);
+    await audit.change(req, {
+      action: 'comment.delete', entityType: 'comment', entityId: commentId,
+      metadata: { post_id: existingComment.post_id, snapshot: { author_id: existingComment.user_id,
+        content: existingComment.content, created_at: existingComment.created_at } }
+    });
 
     res.json({
       success: true,
@@ -11407,6 +11524,18 @@ app.get('/api/admin/users', authenticateToken, requireAdmin, async (req, res) =>
   }
 });
 
+// Record every role change in audit_log (action role.change, entity user) so
+// we can tell later who changed whose access, from what, and when. changedBy
+// is the actor; it is the member themself for email verification / signing.
+async function logRoleChange({ targetUserId, oldRole, newRole, changedBy, reason, req }) {
+  if (oldRole === newRole) return;
+  await audit.change(req, {
+    action: 'role.change', entityType: 'user', entityId: targetUserId,
+    changes: { role: { old: oldRole || null, new: newRole } },
+    reason, actor: changedBy ? { userId: changedBy, type: req && req.apiToken ? 'api_token' : 'user' } : null
+  });
+}
+
 // Update user role (admin)
 app.put('/api/admin/users/:userId/role', authenticateToken, requireAdmin, async (req, res) => {
   try {
@@ -11417,10 +11546,20 @@ app.put('/api/admin/users/:userId/role', authenticateToken, requireAdmin, async 
       return res.status(400).json({ error: 'Invalid role' });
     }
 
+    const [targets] = await db.execute('SELECT role FROM users WHERE id = ?', [userId]);
+    if (targets.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
     await db.execute(
       'UPDATE users SET role = ? WHERE id = ?',
       [role, userId]
     );
+
+    await logRoleChange({
+      targetUserId: Number(userId), oldRole: targets[0].role, newRole: role,
+      changedBy: req.user.userId, reason: 'admin role change', req
+    });
 
     res.json({ message: 'User role updated' });
   } catch (error) {
@@ -11440,10 +11579,17 @@ app.put('/api/admin/users/:userId/hourly-rate', authenticateToken, requireAdmin,
       return res.status(400).json({ error: 'Invalid hourly rate' });
     }
 
+    const [rateBefore] = await db.execute('SELECT hourly_rate FROM users WHERE id = ?', [userId]);
+
     await db.execute(
       'UPDATE users SET hourly_rate = ? WHERE id = ?',
       [hourly_rate, userId]
     );
+
+    await audit.change(req, {
+      action: 'user.hourly_rate', entityType: 'user', entityId: userId,
+      changes: { hourly_rate: { old: rateBefore[0] ? rateBefore[0].hourly_rate : null, new: hourly_rate } }
+    });
 
     res.json({ message: 'Hourly rate updated' });
   } catch (error) {
@@ -11452,21 +11598,86 @@ app.put('/api/admin/users/:userId/hourly-rate', authenticateToken, requireAdmin,
   }
 });
 
-// Get activity logs (admin)
+// Get activity logs (admin) — the latest 100 audit_log rows (activity_log
+// was folded into audit_log; see docs/AUDIT_TRAIL.md)
 app.get('/api/admin/activity', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const [activities] = await db.execute(
-      `SELECT a.*, u.name as user_name, u.github_username
-       FROM activity_log a
-       LEFT JOIN users u ON a.user_id = u.id
-       ORDER BY a.created_at DESC
+    const [activities] = await db.query(
+      `SELECT a.*, a.actor_user_id AS user_id, a.occurred_at AS created_at,
+              COALESCE(u.name, a.actor_name) AS user_name, u.github_username
+       FROM audit_log a
+       LEFT JOIN users u ON a.actor_user_id = u.id
+       ORDER BY a.id DESC
        LIMIT 100`
     );
-    
+
     res.json(activities);
   } catch (error) {
     console.error('Get activity logs error:', error);
     res.status(500).json({ error: 'Failed to fetch activity logs' });
+  }
+});
+
+// Audit trail queries (admin). Filters are all optional; results are newest
+// first, paged by `before` (the last id of the previous page). Times are UTC.
+//   GET /api/admin/audit?entity_type=post&entity_id=42&actor=7&action=role.change&from=2026-10-01&to=2026-10-31
+//   GET /api/admin/access-log?user=7&event=search&resource_type=post&resource_id=42&q=payroll
+function auditPageParams(req) {
+  const limit = Math.min(500, Math.max(1, parseInt(req.query.limit) || 100));
+  const before = parseInt(req.query.before);
+  return { limit, before: isNaN(before) ? null : before };
+}
+
+app.get('/api/admin/audit', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { limit, before } = auditPageParams(req);
+    const where = [];
+    const params = [];
+    if (req.query.entity_type) { where.push('entity_type = ?'); params.push(String(req.query.entity_type)); }
+    if (req.query.entity_id) { where.push('entity_id = ?'); params.push(String(req.query.entity_id)); }
+    if (req.query.actor) { where.push('actor_user_id = ?'); params.push(parseInt(req.query.actor)); }
+    if (req.query.action) {
+      const action = String(req.query.action);
+      if (action.endsWith('.*')) { where.push('action LIKE ?'); params.push(`${action.slice(0, -1)}%`); }
+      else { where.push('action = ?'); params.push(action); }
+    }
+    if (req.query.from) { where.push('occurred_at >= ?'); params.push(String(req.query.from)); }
+    if (req.query.to) { where.push('occurred_at < ?'); params.push(String(req.query.to)); }
+    if (before) { where.push('id < ?'); params.push(before); }
+    const [rows] = await db.query(
+      `SELECT * FROM audit_log ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+       ORDER BY id DESC LIMIT ${limit}`,
+      params
+    );
+    res.json({ rows, next_before: rows.length === limit ? rows[rows.length - 1].id : null });
+  } catch (error) {
+    console.error('Get audit log error:', error);
+    res.status(500).json({ error: 'Failed to fetch audit log' });
+  }
+});
+
+app.get('/api/admin/access-log', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { limit, before } = auditPageParams(req);
+    const where = [];
+    const params = [];
+    if (req.query.user) { where.push('user_id = ?'); params.push(parseInt(req.query.user)); }
+    if (['read', 'search'].includes(req.query.event)) { where.push('event = ?'); params.push(req.query.event); }
+    if (req.query.resource_type) { where.push('resource_type = ?'); params.push(String(req.query.resource_type)); }
+    if (req.query.resource_id) { where.push('resource_id = ?'); params.push(String(req.query.resource_id)); }
+    if (req.query.q) { where.push('query LIKE ?'); params.push(`%${String(req.query.q)}%`); }
+    if (req.query.from) { where.push('occurred_at >= ?'); params.push(String(req.query.from)); }
+    if (req.query.to) { where.push('occurred_at < ?'); params.push(String(req.query.to)); }
+    if (before) { where.push('id < ?'); params.push(before); }
+    const [rows] = await db.query(
+      `SELECT * FROM access_log ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+       ORDER BY id DESC LIMIT ${limit}`,
+      params
+    );
+    res.json({ rows, next_before: rows.length === limit ? rows[rows.length - 1].id : null });
+  } catch (error) {
+    console.error('Get access log error:', error);
+    res.status(500).json({ error: 'Failed to fetch access log' });
   }
 });
 
@@ -11501,6 +11712,11 @@ app.delete('/api/admin/users/:userId', authenticateToken, requireAdmin, async (r
     await db.execute('DELETE FROM users WHERE id = ?', [userId]);
     
     console.log(`User account deleted: ${userToDelete.name} (${userToDelete.email}) by admin ${req.user.userId}`);
+    await audit.change(req, {
+      action: 'user.delete', entityType: 'user', entityId: userId,
+      metadata: { snapshot: { name: userToDelete.name, email: userToDelete.email, role: userToDelete.role,
+        intranet_username: userToDelete.intranet_username, created_at: userToDelete.created_at } }
+    });
     
     res.json({
       message: 'User account deleted successfully',
@@ -11682,6 +11898,11 @@ app.get('/api/auth/verify-email/:token', async (req, res) => {
       [newRole, user.id]
     );
 
+    await logRoleChange({
+      targetUserId: user.id, oldRole: user.role, newRole,
+      changedBy: user.id, reason: 'email verified', req
+    });
+
     // Convert email invites into real assignments (sends the sign-link emails),
     // then consume them.
     for (const invite of emailInvites) {
@@ -11861,11 +12082,23 @@ app.post('/api/agreements/sign', authenticateToken, [
        confirmations && typeof confirmations === 'object' ? JSON.stringify(confirmations) : null]
     );
     
+    await audit.change(req, {
+      action: 'agreement.sign', entityType: 'agreement_version', entityId: agreement.id,
+      metadata: { version: agreement.version, signer_user_id: userId, full_name, email,
+        signed_from_ip: ip_address, confirmations: confirmations && typeof confirmations === 'object' ? confirmations : null }
+    });
+
     // Promote user from pending_agreement to user role after signing
-    await db.execute(
+    const [promoted] = await db.execute(
       'UPDATE users SET role = "user" WHERE id = ? AND role = "pending_agreement"',
       [userId]
     );
+    if (promoted.affectedRows > 0) {
+      await logRoleChange({
+        targetUserId: userId, oldRole: 'pending_agreement', newRole: 'user',
+        changedBy: userId, reason: `signed agreement version ${agreement.version}`, req
+      });
+    }
 
     // Get updated user data to generate new token
     const [updatedUser] = await db.execute(
@@ -12023,16 +12256,12 @@ app.patch('/api/admin/agreements/versions/:versionId/toggle-active', authenticat
       [newActiveStatus ? 1 : 0, versionId]
     );
     
-    // Log the action
-    await db.execute(
-      'INSERT INTO activity_log (user_id, action, details, ip_address) VALUES (?, ?, ?, ?)',
-      [req.user.userId, 'toggle_agreement_version', JSON.stringify({
-        message: `${newActiveStatus ? 'Activated' : 'Deactivated'} agreement version ${version.version}`,
-        agreement_version_id: versionId,
-        agreement_version: version.version,
-        new_status: newActiveStatus
-      }), req.ip]
-    );
+    await audit.change(req, {
+      action: newActiveStatus ? 'agreement_version.activate' : 'agreement_version.deactivate',
+      entityType: 'agreement_version', entityId: versionId,
+      changes: { is_active: { old: !!version.is_active, new: newActiveStatus } },
+      metadata: { version: version.version }
+    });
     
     res.json({
       message: `Agreement version ${version.version} ${newActiveStatus ? 'activated' : 'deactivated'}`,
@@ -12227,6 +12456,11 @@ app.post('/api/admin/users/:userId/request-agreement', authenticateToken, requir
       'UPDATE users SET role = "pending_agreement" WHERE id = ?',
       [userId]
     );
+
+    await logRoleChange({
+      targetUserId: Number(userId), oldRole: user.role, newRole: 'pending_agreement',
+      changedBy: req.user.userId, reason: `agreement signature requested (version ${activeAgreement[0].version})`, req
+    });
     
     // Send email notification to user
     try {
@@ -12286,17 +12520,11 @@ ${SITE_TEAM}`;
       // Don't fail the request if email fails, but log it
     }
     
-    // Log the action
-    await db.execute(
-      'INSERT INTO activity_log (user_id, action, details, ip_address) VALUES (?, ?, ?, ?)',
-      [req.user.userId, 'request_agreement', JSON.stringify({
-        message: `Requested agreement v${activeAgreement[0].version} from user ${user.name} (${user.email})`,
-        agreement_version: activeAgreement[0].version,
-        target_user_id: userId,
-        target_user_name: user.name,
-        target_user_email: user.email
-      }), req.ip]
-    );
+    await audit.change(req, {
+      action: 'agreement.request', entityType: 'user', entityId: userId,
+      metadata: { agreement_version_id: activeAgreement[0].id, version: activeAgreement[0].version,
+        target_user_name: user.name, target_user_email: user.email }
+    });
     
     res.json({
       message: `Agreement v${activeAgreement[0].version} requested from ${user.name}. Email notification sent.`,
@@ -12636,6 +12864,15 @@ app.post('/api/agreements/assignment/:assignmentId/sign', authenticateToken, [
       );
 
       await conn.commit();
+      await audit.change(req, {
+        action: 'agreement.sign', entityType: 'agreement_assignment', entityId: assignmentId,
+        changes: { status: { old: assignment.status, new: 'signed' } },
+        metadata: { agreement_version_id: assignment.agreement_version_id, version: assignment.version,
+          title: assignment.title, agreement_type: assignment.agreement_type, user_agreement_id: userAgreementId,
+          signer_user_id: assignment.user_id, full_name, email, signed_from_ip: ip_address,
+          confirmations: Object.keys(ticked).filter(k => ticked[k]),
+          ...(payrollColumns ? { payroll_fields_saved: Object.keys(payrollColumns) } : {}) }
+      });
       res.json({
         message: 'Agreement signed successfully',
         version: assignment.version,
@@ -12667,6 +12904,10 @@ app.post('/api/admin/agreements/versions/:versionId/assign', authenticateToken, 
     if (isNaN(versionId)) return res.status(400).json({ error: 'Invalid version ID' });
 
     const results = await assignAgreementToUsers(versionId, req.body.user_ids, req.user.userId);
+    await audit.change(req, {
+      action: 'agreement.assign', entityType: 'agreement_version', entityId: versionId,
+      metadata: { user_ids: req.body.user_ids, results }
+    });
     res.json({ results });
   } catch (error) {
     console.error('Assign agreement version error:', error);
@@ -12688,6 +12929,11 @@ app.delete('/api/admin/agreements/versions/:versionId/assign/:userId', authentic
     if (result.affectedRows === 0) {
       return res.status(404).json({ error: 'No pending assignment found for this user and version' });
     }
+    await audit.change(req, {
+      action: 'agreement.unassign', entityType: 'agreement_version', entityId: versionId,
+      changes: { status: { old: 'pending', new: 'cancelled' } },
+      metadata: { user_id: userId }
+    });
     res.json({ message: 'Assignment cancelled' });
   } catch (error) {
     console.error('Cancel assignment error:', error);
@@ -14128,15 +14374,17 @@ async function startServer() {
 }
 
 // Graceful shutdown
-process.on('SIGTERM', () => {
+process.on('SIGTERM', async () => {
   console.log('SIGTERM received, shutting down gracefully');
   stopGitHubSyncScheduler();
+  await audit.flush();
   process.exit(0);
 });
 
-process.on('SIGINT', () => {
+process.on('SIGINT', async () => {
   console.log('SIGINT received, shutting down gracefully');
   stopGitHubSyncScheduler();
+  await audit.flush();
   process.exit(0);
 });
 
