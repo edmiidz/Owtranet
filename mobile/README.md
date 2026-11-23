@@ -28,18 +28,32 @@ src/lib/                 push registration, formatting, file helpers
 
 ## Configuring for your own instance
 
-`app.json` ships with placeholder identifiers — change them before building:
+`app.json` ships with neutral placeholder identifiers (`com.example.owtranet`,
+`intranet.example.com`). Don't edit them to publish your own app: put your identifiers
+and branding in a gitignored instance folder instead, so one checkout can build several
+organisations' apps and the repo never carries anyone's bundle IDs or Firebase config.
 
-- `expo.ios.bundleIdentifier` / `expo.android.package` (default `com.example.owtranet`)
-- `expo.ios.associatedDomains` and the Android `intentFilters` host (default
-  `intranet.example.com`) — must match the server's `IOS_APP_ID` / `ANDROID_PACKAGE`
-  env so the universal-link files it serves line up
-- `expo.extra.defaultWorkspaceUrl` (optional — leave empty and the app asks for the community address on first launch), and `expo.extra.eas.projectId` if you build with EAS
-- `teamID` in `ExportOptions.plist` (only used for local `xcodebuild -exportArchive`)
+```bash
+cp -r instances/example instances/acme     # then edit instances/acme/instance.json
+# optional: instances/acme/assets/*.png, instances/acme/google-services.json
+OWTRANET_INSTANCE=acme npx expo config --type public | head   # check the resolved config
+./scripts/build-ios.sh acme --upload                           # TestFlight
+OWTRANET_INSTANCE=acme ./scripts/build-android-apk.sh --aab    # Play bundle
+```
 
-**Android push (FCM):** add your own Firebase project's `google-services.json` to
-`mobile/` and set `"googleServicesFile": "./google-services.json"` under
-`expo.android` in `app.json`. It is not committed; without it the app builds and runs,
-push registration is simply skipped on Android.
+If your deployment already keeps its customisations in a private instance repository
+(`INSTANCE_DIR`, see `../docs/PLUGINS.md`), put the folder there instead, e.g.
+`my-intranet/instance/mobile/`, and pass its path: `OWTRANET_INSTANCE=../../my-intranet/instance/mobile`
+(any value containing a `/` is taken as a path rather than a name under `instances/`).
 
-The icons in `assets/` are neutral placeholders — replace them with your brand.
+`app.config.js` applies the instance on top of `app.json`. Field reference:
+`instances/README.md`. Release steps (build numbers, iOS 27 scene life cycle, TestFlight):
+`RELEASING.md`.
+
+The server must match: set `IOS_APP_ID` (`<teamId>.<bundleId>`) and `ANDROID_PACKAGE` in
+its `.env` so the universal-link files it serves line up with the app.
+
+Without `OWTRANET_INSTANCE` you get the placeholder Owtranet app — fine for development
+(`npx expo start`). Its icons in `assets/` are neutral placeholders, and with
+`extra.defaultWorkspaceUrl` empty it asks for the community address on first launch. An
+instance build preselects `https://<domain>` unless `defaultWorkspaceUrl` says otherwise.

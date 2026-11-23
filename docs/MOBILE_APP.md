@@ -154,8 +154,10 @@ npx expo run:android
 
 - **Workspace URL** is chosen at login (default comes from `extra.defaultWorkspaceUrl` in
   `app.json`), so one build can serve several instances. Branding comes from `/api/mobile/config`.
-- Before building your own app, set your bundle id / package, associated domains and EAS
-  project in `mobile/app.json` — see `mobile/README.md`.
+- To publish your own build, put your bundle id / package, team, domain, icons and
+  `google-services.json` in a gitignored `mobile/instances/<name>/` folder and build with
+  `OWTRANET_INSTANCE=<name>` (`mobile/scripts/build-ios.sh <name> --upload`) — see
+  `mobile/instances/README.md` and `mobile/RELEASING.md`. `app.json` itself stays neutral.
 - Session: JWT in `expo-secure-store`; the same 7-day token the web app uses.
 - **Multiple accounts** (#6, Instagram-style): the app stays signed in to several
   workspace + user pairs at once. **More → Switch account** (or long-press the **More** tab)

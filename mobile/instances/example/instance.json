@@ -1,0 +1,16 @@
+{
+  "name": "Acme Intranet",
+  "slug": "acme-intranet",
+  "bundleIdentifier": "com.example.acme.intranet",
+  "androidPackage": "com.example.acme.intranet",
+  "appleTeamId": "ABCDE12345",
+  "domain": "intranet.example.com",
+  "defaultWorkspaceUrl": "https://intranet.example.com",
+  "version": "1.0.0",
+  "buildNumber": 1,
+  "versionCode": 1,
+  "shareExtensionName": "Acme Share",
+  "backgroundColor": "#0f172a",
+  "accentColor": "#2563eb",
+  "easProjectId": ""
+}

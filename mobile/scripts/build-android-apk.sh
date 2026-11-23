@@ -8,7 +8,8 @@
 #   Android SDK 36             sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
 #                              export ANDROID_HOME="$HOME/Library/Android/sdk"
 #
-# Usage:  ./scripts/build-android-apk.sh            → mobile/dist/intranet-<version>-<code>.apk
+# Usage:  ./scripts/build-android-apk.sh            → mobile/dist/<slug>-<version>-<code>.apk
+#         OWTRANET_INSTANCE=acme ./scripts/build-android-apk.sh   → build instances/acme (see instances/README.md)
 #         ./scripts/build-android-apk.sh --aab      → Play-Store bundle instead of APK
 #         ./scripts/build-android-apk.sh --arm64    → arm64-v8a only (see below)
 #         ./scripts/build-android-apk.sh --abi=arm64-v8a,armeabi-v7a
@@ -47,7 +48,11 @@ for arg in "$@"; do
 done
 
 echo "▶ npm install"; npm install --no-audit --no-fund --legacy-peer-deps >/dev/null
-echo "▶ expo prebuild (android)"; npx expo prebuild --platform android --no-install >/dev/null
+# Switching instance changes the package name; regenerate android/ from scratch then.
+PREBUILD_ARGS=(--platform android --no-install)
+if [[ -d android && "$(cat android/.owtranet-instance 2>/dev/null)" != "${OWTRANET_INSTANCE:-}" ]]; then PREBUILD_ARGS+=(--clean); fi
+echo "▶ expo prebuild (android${OWTRANET_INSTANCE:+, instance $OWTRANET_INSTANCE})"; npx expo prebuild "${PREBUILD_ARGS[@]}" >/dev/null
+printf '%s' "${OWTRANET_INSTANCE:-}" > android/.owtranet-instance
 
 if [[ -n "${INTRANET_KEYSTORE:-}" ]]; then
   echo "▶ signing with upload keystore $INTRANET_KEYSTORE"
@@ -115,8 +120,9 @@ if [[ -n "$WORKERS" ]]; then
 fi
 ( cd android && ./gradlew "${GRADLE_ARGS[@]}" )
 
-VERSION=$(node -p "require('./app.json').expo.version"); CODE=$(node -p "require('./app.json').expo.android.versionCode")
-mkdir -p dist; OUT="dist/intranet-${VERSION}-${CODE}.${EXT}"; cp $OUT_GLOB "$OUT"
+CFG=$(npx expo config --type public --json 2>/dev/null)
+read -r SLUG VERSION CODE < <(node -e 'const c=JSON.parse(require("fs").readFileSync(0));console.log(c.slug,c.version,c.android.versionCode)' <<<"$CFG")
+mkdir -p dist; OUT="dist/${SLUG}-${VERSION}-${CODE}.${EXT}"; cp $OUT_GLOB "$OUT"
 
 # Verify what actually signed it — never trust the patch silently.
 #

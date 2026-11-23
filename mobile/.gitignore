@@ -12,3 +12,8 @@ expo-env.d.ts
 .DS_Store
 ios/
 android/
+
+# Per-instance identifiers and branding stay out of the public repo
+instances/*
+!instances/README.md
+!instances/example/
