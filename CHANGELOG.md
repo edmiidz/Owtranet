@@ -48,6 +48,16 @@ No migrations and no new settings.
   bare date, messages and the conversation list show `2:16 PM` for today,
   `Yesterday 3:40 PM`, or `2026-09-28 3:40 PM` for older messages. Hover for
   the full date, time and time zone.
+### Fixes
+
+- **Direct message threads open at the newest message** (#37). Opening a long
+  thread used to load its whole history and scroll down from the first message,
+  which could take seconds, and background refreshes pulled readers back down
+  while they read older messages. Threads now open at the bottom straight away,
+  load the newest 50 messages, and fetch earlier ones as you scroll up.
+  `GET /api/messages/conversations/:id` accepts optional `limit` (max 200) and
+  `before_id`; without them it returns the full history as before, so the
+  mobile app and other API clients are unaffected.
 
 ## 1.1.1 — 2026-11-18
 

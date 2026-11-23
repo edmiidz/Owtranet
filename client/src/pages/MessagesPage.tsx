@@ -1,11 +1,20 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Send, MessageSquare, ArrowLeft, Heart, Trash2, Reply, X } from 'lucide-react';
 import { useAuthStore } from '../stores/authStore';
-import { messagesApi, usersApi } from '../utils/api';
+import { messagesApi, usersApi, DM_PAGE_SIZE } from '../utils/api';
 import { notifyBadgesChanged } from '../utils/badges';
 import ForumContent from '../components/ForumContent';
 import { DirectMessage } from '../types';
+
+// Fold a freshly fetched newest page into what is on screen: keep any older
+// pages the user scrolled back to, take the fetched rows as-is (they carry the
+// latest likes / deletions).
+const mergeLatest = (prev: DirectMessage[], latest: DirectMessage[]): DirectMessage[] => {
+  if (latest.length === 0) return prev;
+  const oldestFetched = latest[0].id;
+  return [...prev.filter(m => m.id < oldestFetched), ...latest];
+};
 
 interface Conversation {
   conversation_id: number;
@@ -34,11 +43,20 @@ const MessagesPage: React.FC = () => {
   const [sending, setSending] = useState(false);
   // An AI agent answers a DM a few seconds after it is sent; while it writes,
   // show "<Agent> is typing…" and poll the thread until its reply lands.
-  const [agentTyping, setAgentTyping] = useState<{ conversationId: number; name: string; sinceCount: number } | null>(null);
+  const [agentTyping, setAgentTyping] = useState<{ conversationId: number; name: string; sinceId: number } | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [lastMessageCount, setLastMessageCount] = useState<number>(0);
+  const [hasOlder, setHasOlder] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
 
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  // Scroll bookkeeping: jump straight to the newest message when a thread
+  // opens, stay pinned to the bottom while the reader is there, and keep the
+  // reader's place when older history is prepended above them.
+  const jumpToBottomRef = useRef(true);
+  const atBottomRef = useRef(true);
+  const prependAnchorRef = useRef<{ height: number; top: number } | null>(null);
+  const loadedConversationRef = useRef<number | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -52,10 +70,23 @@ const MessagesPage: React.FC = () => {
     }
   }, [searchParams]);
 
-  // Auto-scroll to bottom when messages change
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
+  // Runs before paint, so an opened thread is shown already at the bottom
+  // instead of animating down from the first message.
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    if (prependAnchorRef.current) {
+      const { height, top } = prependAnchorRef.current;
+      prependAnchorRef.current = null;
+      el.scrollTop = el.scrollHeight - height + top;
+    } else if (jumpToBottomRef.current) {
+      jumpToBottomRef.current = false;
+      atBottomRef.current = true;
+      el.scrollTop = el.scrollHeight;
+    } else if (atBottomRef.current) {
+      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    }
+  }, [messages, agentTyping]);
 
   // Initialize audio for notifications
   useEffect(() => {
@@ -114,9 +145,10 @@ const MessagesPage: React.FC = () => {
     const startedAt = Date.now();
     const poll = setInterval(async () => {
       try {
-        const data = await messagesApi.getMessages(agentTyping.conversationId);
-        if (selectedConversation === agentTyping.conversationId) setMessages(data);
-        if (data.length > agentTyping.sinceCount || Date.now() - startedAt > 120000) {
+        const data: DirectMessage[] = await messagesApi.getMessages(agentTyping.conversationId);
+        if (selectedConversation === agentTyping.conversationId) setMessages(prev => mergeLatest(prev, data));
+        const newest = data.length ? data[data.length - 1].id : 0;
+        if (newest > agentTyping.sinceId || Date.now() - startedAt > 120000) {
           setAgentTyping(null);
           if (selectedConversation === agentTyping.conversationId) {
             await messagesApi.markAsRead(agentTyping.conversationId);
@@ -130,8 +162,40 @@ const MessagesPage: React.FC = () => {
     return () => clearInterval(poll);
   }, [agentTyping, selectedConversation]);
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  const handleMessagesScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+    if (el.scrollTop < 200 && hasOlder && !loadingOlder) loadOlderMessages();
+  };
+
+  // Images (pasted screenshots) finish loading after the first layout and
+  // grow the thread; keep the bottom in view if that is where the reader is.
+  const handleMediaLoad = () => {
+    const el = scrollRef.current;
+    if (el && atBottomRef.current) el.scrollTop = el.scrollHeight;
+  };
+
+  const loadOlderMessages = async () => {
+    if (!selectedConversation || selectedConversation === -1 || messages.length === 0) return;
+    const conversationId = selectedConversation;
+    setLoadingOlder(true);
+    try {
+      const older: DirectMessage[] = await messagesApi.getMessages(conversationId, { beforeId: messages[0].id });
+      if (selectedConversation !== conversationId) return;
+      setHasOlder(older.length === DM_PAGE_SIZE);
+      if (older.length === 0) return;
+      const el = scrollRef.current;
+      if (el) prependAnchorRef.current = { height: el.scrollHeight, top: el.scrollTop };
+      setMessages(prev => {
+        const known = new Set(prev.map(m => m.id));
+        return [...older.filter(m => !known.has(m.id)), ...prev];
+      });
+    } catch {
+      // Leave hasOlder as-is so scrolling up retries.
+    } finally {
+      setLoadingOlder(false);
+    }
   };
 
   const loadConversations = async (): Promise<Conversation[]> => {
@@ -202,8 +266,17 @@ const MessagesPage: React.FC = () => {
     }
     
     try {
-      const messagesData = await messagesApi.getMessages(conversationId);
-      setMessages(messagesData);
+      const messagesData: DirectMessage[] = await messagesApi.getMessages(conversationId);
+      // Background refresh of the open thread keeps scrolled-back history;
+      // a different thread replaces it and opens at the bottom.
+      if (loadedConversationRef.current === conversationId) {
+        setMessages(prev => mergeLatest(prev, messagesData));
+      } else {
+        loadedConversationRef.current = conversationId;
+        jumpToBottomRef.current = true;
+        setHasOlder(messagesData.length === DM_PAGE_SIZE);
+        setMessages(messagesData);
+      }
       
       // Mark messages as read and let the sidebar badge know
       await messagesApi.markAsRead(conversationId);
@@ -292,13 +365,12 @@ const MessagesPage: React.FC = () => {
       }
       
       // Add message to current view
-      setMessages(prev => {
-        const next = [...prev, response.data];
-        if (response.agent_replying) {
-          setAgentTyping({ conversationId: response.conversation_id, name: targetConversation.other_user_name, sinceCount: next.length });
-        }
-        return next;
-      });
+      // Sending always brings the reader back to the newest message.
+      atBottomRef.current = true;
+      setMessages(prev => [...prev, response.data]);
+      if (response.agent_replying) {
+        setAgentTyping({ conversationId: response.conversation_id, name: targetConversation.other_user_name, sinceId: response.data.id });
+      }
       setNewMessage('');
       setReplyTo(null);
 
@@ -317,6 +389,9 @@ const MessagesPage: React.FC = () => {
   const selectConversation = (conversation: Conversation) => {
     setSelectedConversation(conversation.conversation_id);
     setReplyTo(null);
+    jumpToBottomRef.current = true;
+    loadedConversationRef.current = null;
+    setHasOlder(false);
     if (conversation.conversation_id !== -1) {
       loadMessages(conversation.conversation_id);
     } else {
@@ -502,7 +577,15 @@ const MessagesPage: React.FC = () => {
             </div>
 
             {/* Messages */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            <div
+              ref={scrollRef}
+              onScroll={handleMessagesScroll}
+              onLoadCapture={handleMediaLoad}
+              className="flex-1 overflow-y-auto p-4 space-y-4"
+            >
+              {loadingOlder && (
+                <div className="text-center text-xs text-gray-400">Loading earlier messages…</div>
+              )}
               {messages.map((message) => (
                 <div
                   key={message.id}
@@ -622,7 +705,6 @@ const MessagesPage: React.FC = () => {
                   {agentTyping.name} is typing…
                 </div>
               )}
-              <div ref={messagesEndRef} />
             </div>
 
             {/* Message Input */}
