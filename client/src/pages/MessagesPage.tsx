@@ -324,16 +324,31 @@ const MessagesPage: React.FC = () => {
     }
   };
 
+  // Today → "2:16 PM", yesterday → "Yesterday 3:40 PM", older → "2026-09-28 3:40 PM"
   const formatMessageTime = (dateString: string) => {
     const date = new Date(dateString);
-    const now = new Date();
-    const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000);
-    
-    if (diffInSeconds < 60) return 'Just now';
-    if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}m ago`;
-    if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}h ago`;
-    return date.toLocaleDateString();
+    const time = date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const startOfYesterday = new Date(startOfToday);
+    startOfYesterday.setDate(startOfYesterday.getDate() - 1);
+
+    if (date >= startOfToday) return time;
+    if (date >= startOfYesterday) return `Yesterday ${time}`;
+    return `${date.toLocaleDateString('en-CA')} ${time}`;
   };
+
+  const formatFullTimestamp = (dateString: string) =>
+    new Date(dateString).toLocaleString('en-CA', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+      timeZoneName: 'short'
+    }).replace(',', '');
 
   const likeMessage = async (messageId: number) => {
     try {
@@ -447,7 +462,7 @@ const MessagesPage: React.FC = () => {
                       </p>
                     </div>
                     {conversation.last_message_at && (
-                      <div className="text-xs text-gray-400">
+                      <div className="text-xs text-gray-400 whitespace-nowrap" title={formatFullTimestamp(conversation.last_message_at)}>
                         {formatMessageTime(conversation.last_message_at)}
                       </div>
                     )}
@@ -533,7 +548,7 @@ const MessagesPage: React.FC = () => {
                         ? 'text-gray-400'
                         : message.sender_id === currentUser?.id ? 'text-blue-100' : 'text-gray-500'
                     }`}>
-                      <p className="text-xs">
+                      <p className="text-xs" title={formatFullTimestamp(message.created_at)}>
                         {formatMessageTime(message.created_at)}
                       </p>
 

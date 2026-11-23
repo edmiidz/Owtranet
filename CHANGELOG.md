@@ -42,6 +42,12 @@ No migrations and no new settings.
   admin, and each DM became a push notification, so automated integrations
   flooded admins' phones. API submissions still appear in the Investment
   Tracker for review.
+### Changes
+
+- **Direct messages show the time of day** (#36). Instead of "3h ago" or a
+  bare date, messages and the conversation list show `2:16 PM` for today,
+  `Yesterday 3:40 PM`, or `2026-09-28 3:40 PM` for older messages. Hover for
+  the full date, time and time zone.
 
 ## 1.1.1 — 2026-11-18
 
