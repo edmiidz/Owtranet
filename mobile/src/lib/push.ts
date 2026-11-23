@@ -5,6 +5,7 @@ import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
 import { mobileApi } from '@/api';
+import { hrefForNotification } from '@/lib/notificationHref';
 
 const TOKEN_KEY = 'intranet.pushToken';
 
@@ -89,10 +90,7 @@ export function hrefForNotificationData(data: any): string | null {
   if (!data) return null;
   if (data.kind === 'dm' && data.conversation_id) return `/messages/${data.conversation_id}`;
   if (data.kind === 'group' && data.group_id) return `/groups/${data.group_id}`;
-  if (data.kind === 'notification') {
-    if (typeof data.url === 'string' && data.url.startsWith('/forum/post/')) return data.url;
-    if (data.post_slug) return `/forum/${data.post_slug}`;
-    return '/notifications';
-  }
+  // pushDispatcher spreads notifications.data into the payload next to `type`.
+  if (data.kind === 'notification') return hrefForNotification(data.type, data) ?? '/notifications';
   return null;
 }

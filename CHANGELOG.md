@@ -28,6 +28,13 @@ No migrations and no new settings.
   that could never work. The app now signs that account out (or switches to the
   next signed-in account), as the web client already did. Other 403s, such as
   permission denials, still keep you signed in. Ships with the next app build.
+### Fixes
+
+- **Mobile: tapping a comment or mention notification now opens the post**
+  (#35). "New comment on your post" and mention notifications did nothing when
+  tapped in the list, and opened the Notifications screen when tapped as a push.
+  Both now open the post, group channel or task they refer to. Ships with the
+  next app build.
 
 ## 1.1.1 — 2026-11-18
 

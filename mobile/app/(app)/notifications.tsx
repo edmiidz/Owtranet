@@ -6,6 +6,7 @@ import { useAsync } from '@/lib/useAsync';
 import { timeAgo } from '@/lib/format';
 import { Button, Card, Empty, ErrorBox, Loading, Row, Screen } from '@/components/ui';
 import { useTheme } from '@/theme';
+import { hrefForNotification } from '@/lib/notificationHref';
 import { View } from 'react-native';
 
 const ICONS: Record<string, any> = { mention: 'at-outline', post_reply: 'chatbubble-outline', like: 'heart-outline', system: 'information-circle-outline', direct_message: 'mail-outline', deliverable: 'trending-up-outline', agreement: 'document-text-outline' };
@@ -16,15 +17,7 @@ export default function NotificationsScreen() {
   const refreshBadges = useBadges(s => s.refresh);
   const { data, loading, error, reload, refresh, refreshing } = useAsync(() => notificationsApi.list(), []);
 
-  function hrefFor(n: any): string | null {
-    let d: any = n.data; try { if (typeof d === 'string') d = JSON.parse(d); } catch { d = null; }
-    if (d?.conversation_id) return `/messages/${d.conversation_id}`;
-    if (d?.post_slug) return `/forum/${d.post_slug}`;
-    if (typeof d?.url === 'string' && d.url.startsWith('/forum/post/')) return `/forum/${d.url.split('/').pop()}`;
-    if (d?.deliverable_id) return `/investments/${d.deliverable_id}`;
-    if (d?.assignment_id) return `/agreements/${d.assignment_id}`;
-    return null;
-  }
+  const hrefFor = (n: any) => hrefForNotification(n.type, n.data);
 
   async function open(n: any) {
     if (!n.is_read) { notificationsApi.markRead(n.id).catch(() => {}); refreshBadges(); }
