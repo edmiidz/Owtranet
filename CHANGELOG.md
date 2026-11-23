@@ -35,6 +35,13 @@ No migrations and no new settings.
   tapped in the list, and opened the Notifications screen when tapped as a push.
   Both now open the post, group channel or task they refer to. Ships with the
   next app build.
+### Fixes
+
+- **Admins no longer get a direct message for every deliverable submitted
+  through the API** (#40). Each `POST /api/v1/deliverables` used to DM every
+  admin, and each DM became a push notification, so automated integrations
+  flooded admins' phones. API submissions still appear in the Investment
+  Tracker for review.
 
 ## 1.1.1 — 2026-11-18
 

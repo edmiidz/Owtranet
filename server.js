@@ -8456,56 +8456,10 @@ app.post('/api/v1/deliverables', authenticateApiToken, [
       }
     }
     
-    // Notify admins via direct messages (skip for historical backfill)
-    const isHistoricalBackfill = tags.includes('historical-backfill');
+    // No admin DM per API submission: automated integrations can post dozens a
+    // day and each DM became a phone push. Admins review them in the
+    // Investment Tracker instead.
 
-    if (!isHistoricalBackfill) {
-      const [admins] = await db.execute(
-        'SELECT * FROM users WHERE role = "admin"'
-      );
-
-      const notificationMessage = `# 🤖 API Deliverable Submission
-
-**Title**: ${title}
-**Category**: ${category}
-**Amount**: ${amount ? `$${amount} USD` : 'Requires valuation'}
-**Date**: ${deliverable_date || 'Today'}
-**Submitted via**: ${req.apiToken.name}
-
-**Description**:
-${content.substring(0, 300)}${content.length > 300 ? '...' : ''}
-
-**Action Required**: Review this API-submitted deliverable.
-
-[View in Investment Tracker](/investment-tracker)`;
-
-      for (const admin of admins) {
-        // Send via direct message
-        const conversationResult = await db.execute(`
-          SELECT id FROM dm_conversations
-          WHERE (user1_id = 1 AND user2_id = ?) OR (user1_id = ? AND user2_id = 1)
-        `, [admin.id, admin.id]);
-
-        let conversationId;
-        if (conversationResult[0].length > 0) {
-          conversationId = conversationResult[0][0].id;
-        } else {
-          const [newConv] = await db.execute(
-            'INSERT INTO dm_conversations (user1_id, user2_id) VALUES (?, ?)',
-            [1, admin.id]
-          );
-          conversationId = newConv.insertId;
-        }
-
-        const messageHtml = DOMPurify.sanitize(marked.parse(notificationMessage));
-
-        await db.execute(`
-          INSERT INTO direct_messages (conversation_id, sender_id, recipient_id, content, content_html)
-          VALUES (?, ?, ?, ?, ?)
-        `, [conversationId, 1, admin.id, notificationMessage, messageHtml]);
-      }
-    }
-    
     // Log the API usage
     console.log(`API Deliverable created: "${title}" for $${amount || 'TBD'} via ${req.apiToken.name}`);
     
