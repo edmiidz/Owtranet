@@ -47,7 +47,12 @@ for arg in "$@"; do
 done
 
 echo "▶ npm install"; npm install --no-audit --no-fund --legacy-peer-deps >/dev/null
-echo "▶ expo prebuild (android)"; npx expo prebuild --platform android --no-install >/dev/null
+# OWTRANET_INSTANCE (see README "Publishing your own build") changes the package name;
+# regenerate android/ from scratch when it differs from the last build.
+PREBUILD_ARGS=(--platform android --no-install)
+if [[ -d android && "$(cat android/.owtranet-instance 2>/dev/null)" != "${OWTRANET_INSTANCE:-}" ]]; then PREBUILD_ARGS+=(--clean); fi
+echo "▶ expo prebuild (android)"; npx expo prebuild "${PREBUILD_ARGS[@]}" >/dev/null
+printf '%s' "${OWTRANET_INSTANCE:-}" > android/.owtranet-instance
 
 if [[ -n "${INTRANET_KEYSTORE:-}" ]]; then
   echo "▶ signing with upload keystore $INTRANET_KEYSTORE"
@@ -116,7 +121,9 @@ fi
 ( cd android && ./gradlew "${GRADLE_ARGS[@]}" )
 
 # String(), not a bare number: node colors numbers when FORCE_COLOR is set, which lands in the filename.
-VERSION=$(node -e "console.log(String(require('./app.json').expo.version))"); CODE=$(node -e "console.log(String(require('./app.json').expo.android.versionCode))")
+# Read the resolved config so an OWTRANET_INSTANCE build is named after its own version.
+read -r VERSION CODE < <(npx expo config --type public --json 2>/dev/null \
+  | node -e 'const c=JSON.parse(require("fs").readFileSync(0));console.log(c.version,c.android.versionCode)')
 mkdir -p dist; OUT="dist/intranet-${VERSION}-${CODE}.${EXT}"; cp $OUT_GLOB "$OUT"
 
 # Verify what actually signed it — never trust the patch silently.

@@ -43,3 +43,54 @@ src/lib/                 push registration, formatting, file helpers
 push registration is simply skipped on Android.
 
 The icons in `assets/` are neutral placeholders — replace them with your brand.
+
+## Publishing your own build
+
+The project does not publish this app to the stores. To publish or sideload it for your
+organisation you need your own bundle ID / package, Apple team, and push credentials
+(APNs key on the server, `google-services.json` for Android). You can edit `app.json` as
+above, or keep everything in a folder **outside this repository** (for example in your
+private instance repo, next to `INSTANCE_DIR`; see `../docs/PLUGINS.md`) and point
+`OWTRANET_INSTANCE` at it. `app.config.js` then applies it on top of `app.json`:
+
+```
+my-intranet/mobile-instance/
+  instance.json          required (below)
+  assets/                optional: icon.png, splash-icon.png, favicon.png, notification-icon.png,
+                         android-icon-{foreground,background,monochrome}.png
+  google-services.json   optional: Firebase config for Android push
+```
+
+```json
+{
+  "name": "Acme Intranet",
+  "bundleIdentifier": "com.example.acme.intranet",
+  "appleTeamId": "ABCDE12345",
+  "domain": "intranet.example.com",
+  "version": "1.0.0",
+  "buildNumber": 1,
+  "versionCode": 1
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `name` (required) | App name; also names the Xcode project |
+| `bundleIdentifier` (required) | iOS bundle ID; also the Android package unless `androidPackage` is set |
+| `domain` (required) | Host for universal links / Android App Links |
+| `appleTeamId` | Apple Developer team (needed by `build-ios.sh`) |
+| `buildNumber` / `versionCode` | Must increase with every store upload |
+| `version`, `slug`, `androidPackage`, `shareExtensionName`, `backgroundColor`, `accentColor`, `easProjectId` | Optional overrides |
+| `defaultWorkspaceUrl` | Community preselected at sign-in; leave it out to ask on first launch |
+
+```bash
+OWTRANET_INSTANCE=/path/to/mobile-instance npx expo config --type public   # check
+./scripts/build-ios.sh /path/to/mobile-instance            # archive → dist/
+./scripts/build-ios.sh /path/to/mobile-instance --upload   # … and upload to TestFlight
+OWTRANET_INSTANCE=/path/to/mobile-instance ./scripts/build-android-apk.sh
+```
+
+Set the server's `IOS_APP_ID` (`<teamId>.<bundleId>`) and `ANDROID_PACKAGE` to match, so
+the universal-link files it serves name your app. An app opens web links only for the
+domains it was built with; other communities' links still work inside the app but open in
+the browser when tapped elsewhere.
