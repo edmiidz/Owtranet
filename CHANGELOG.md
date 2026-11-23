@@ -111,6 +111,13 @@ opening a direct message thread or group channel fails.
   `ELEVENLABS_EXTRA_AGENT_IDS`, without changing their prompts. An agent that
   can't be updated is reported and skipped (the script then exits non-zero).
   Re-run the script after upgrading if you have more than one agent.
+### Added
+
+- **Optional inbound spam/phishing filtering for self-hosted mail** (#44).
+  `scripts/mail-postscreen.sh` puts Postfix postscreen with weighted DNS
+  blocklist scoring in front of port 25, with a log-only mode, a report of what
+  would be refused, and automatic rollback. Nothing changes until you run it; see
+  "Inbound spam and phishing filtering" in `docs/EMAIL_SYSTEM_ARCHITECTURE.md`.
 
 ## 1.1.1 — 2026-11-18
 
