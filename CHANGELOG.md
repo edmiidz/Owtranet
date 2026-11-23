@@ -9,90 +9,24 @@ upgrade needs. To upgrade any instance from any earlier version, follow
 
 ### Upgrade steps
 
-No migrations and no new settings.
+Apply these migrations **before** deploying the new server. `node scripts/check-schema.js`
+names them, `./deploy.sh` runs that check for you, and both are safe to re-run.
 
-### Fixes
+- `server/migrations/add_message_edits.sql`: the message endpoints read the new
+  `edited_at` columns, so without it opening a direct message thread or group
+  channel fails.
+- `server/migrations/add_audit_trail.sql`: creates `audit_log` and `access_log`
+  and copies your existing `activity_log` history into `audit_log`.
 
-- **Read routes that skipped sign-in now require it.** Member profiles
-  (`GET /api/users/:username`, including `id:N` lookups), posts by id
-  (`GET /api/posts/id/:id`), quick links and GitHub issues could be read
-  without signing in. Posts by id now also follow post visibility, as the
-  forum does: author-only and specific-member posts return 404 to anyone else.
-  The web and mobile apps already send a token on these calls, so nothing
-  changes for members. Covered by the new `test/db/access-test.sh` in CI.
-### Fixes
-
-- **Mobile app stuck on error screens after the session expired.** The server
-  answers an expired or invalid sign-in with 403 "Invalid or expired token", but
-  the app only signed out on 401, so every screen showed an error with a Retry
-  that could never work. The app now signs that account out (or switches to the
-  next signed-in account), as the web client already did. Other 403s, such as
-  permission denials, still keep you signed in. Ships with the next app build.
-### Fixes
-
-- **Mobile: tapping a comment or mention notification now opens the post**
-  (#35). "New comment on your post" and mention notifications did nothing when
-  tapped in the list, and opened the Notifications screen when tapped as a push.
-  Both now open the post, group channel or task they refer to. Ships with the
-  next app build.
-### Fixes
-
-- **Admins no longer get a direct message for every deliverable submitted
-  through the API** (#40). Each `POST /api/v1/deliverables` used to DM every
-  admin, and each DM became a push notification, so automated integrations
-  flooded admins' phones. API submissions still appear in the Investment
-  Tracker for review.
-### Changes
-
-- **Direct messages show the time of day** (#36). Instead of "3h ago" or a
-  bare date, messages and the conversation list show `2:16 PM` for today,
-  `Yesterday 3:40 PM`, or `2026-09-28 3:40 PM` for older messages. Hover for
-  the full date, time and time zone.
-### Fixes
-
-- **Direct message threads open at the newest message** (#37). Opening a long
-  thread used to load its whole history and scroll down from the first message,
-  which could take seconds, and background refreshes pulled readers back down
-  while they read older messages. Threads now open at the bottom straight away,
-  load the newest 50 messages, and fetch earlier ones as you scroll up.
-  `GET /api/messages/conversations/:id` accepts optional `limit` (max 200) and
-  `before_id`; without them it returns the full history as before, so the
-  mobile app and other API clients are unaffected.
-### Fixes
-
-- **Agreements: members are no longer sent to a team agreement that doesn't
-  apply to them** (#39). The profile page told every member without a signed
-  team agreement "You must sign the team agreement" and linked to `/agreement`,
-  even when their agreements are assigned individually, which could lead someone
-  to sign the wrong one. The profile now lists only agreements actually assigned
-  to you that still need signing, each linking to its own page; voided
-  signatures are shown greyed out with a "voided" badge. `/agreement` sends
-  members with individual assignments to their pending one (or the dashboard),
-  and shows "No agreement required" instead of an error when no team agreement
-  is active.
-### Fixes
-
-- **Android: the release build compiles again, and a fresh `npm install` in
-  `mobile/` works** (#43). `@livekit/react-native-webrtc` 144.2.0 broke the
-  Android compile while iOS kept building, and `@livekit/react-native-expo-plugin`
-  1.2.0 failed npm's peer-dependency check. Both are now pinned (see
-  `docs/MOBILE_APP.md`). If you build the app yourself, delete
-  `mobile/node_modules` and run `npm install` again before the next build.
-- `build-android-apk.sh` no longer puts colour codes in the APK filename when
-  `FORCE_COLOR` is set.
+Optional new settings: `ELEVENLABS_EXTRA_AGENT_IDS` (voice agents to keep in sync with the
+intranet tools), `FIREBASE_ANDROID_APP_ID` / `FIREBASE_TESTER_GROUP` (Android tester
+distribution). Mobile fixes ship with the next app build.
 
 ### Added
 
 - `mobile/scripts/distribute-android.sh` sends an Android build to testers through
   Firebase App Distribution. Configure it with `FIREBASE_ANDROID_APP_ID` (and
   optionally `FIREBASE_TESTER_GROUP`).
-Apply `server/migrations/add_message_edits.sql` **before** deploying the new
-server: the message endpoints read the new `edited_at` columns, so without it
-opening a direct message thread or group channel fails.
-`node scripts/check-schema.js` names it (`./deploy.sh` runs that check for you).
-
-### Added
-
 - **Edit your own direct and group chat messages** (#38). On the web, a pencil
   on your own message opens an inline editor; in the mobile app, long-press →
   Edit puts the text in the composer and Send becomes Save. Everyone in the
@@ -100,31 +34,11 @@ opening a direct message thread or group channel fails.
   deleted messages can't be edited, and an edit doesn't send new notifications,
   mentions or AI agent replies. API: `PUT /api/messages/:id` and
   `PUT /api/group-chat/:groupId/messages/:id`, body `{ "content": "…" }`.
-### Fixes
-
-- **ElevenLabs tool sync updates every agent that uses the intranet tools**
-  (#45). `server/scripts/syncElevenLabsAgentTools.js` only gave new tools to
-  `ELEVENLABS_AGENT_ID`, so other voice agents sharing the toolset (for example
-  for the channel tools) never got them and told members they couldn't do things
-  the API supports. It now also adds any missing intranet tools to every agent
-  that already uses one of them, and to agents listed in the new optional
-  `ELEVENLABS_EXTRA_AGENT_IDS`, without changing their prompts. An agent that
-  can't be updated is reported and skipped (the script then exits non-zero).
-  Re-run the script after upgrading if you have more than one agent.
-### Added
-
 - **Optional inbound spam/phishing filtering for self-hosted mail** (#44).
   `scripts/mail-postscreen.sh` puts Postfix postscreen with weighted DNS
   blocklist scoring in front of port 25, with a log-only mode, a report of what
   would be refused, and automatic rollback. Nothing changes until you run it; see
   "Inbound spam and phishing filtering" in `docs/EMAIL_SYSTEM_ARCHITECTURE.md`.
-Apply `server/migrations/add_audit_trail.sql` **before** deploying the new
-server: it creates `audit_log` and `access_log` and copies your existing
-`activity_log` history into `audit_log`. `node scripts/check-schema.js` names it
-(`./deploy.sh` runs that check for you). Safe to re-run.
-
-### Added
-
 - **Audit trail** (#42, #41). Two new tables, documented in `docs/AUDIT_TRAIL.md`:
   - `audit_log` records every change, kept indefinitely: who (a name snapshot that
     survives user deletion; person, API token, AI agent or system), what record,
@@ -140,8 +54,73 @@ server: it creates `audit_log` and `access_log` and copies your existing
   - Admin API: `GET /api/admin/audit` and `GET /api/admin/access-log` with filters
     and paging. `GET /api/admin/activity` now returns `audit_log` rows.
 
+### Changes
+
+- **Direct messages show the time of day** (#36). Instead of "3h ago" or a
+  bare date, messages and the conversation list show `2:16 PM` for today,
+  `Yesterday 3:40 PM`, or `2026-09-28 3:40 PM` for older messages. Hover for
+  the full date, time and time zone.
+
 ### Fixes
 
+- **Read routes that skipped sign-in now require it.** Member profiles
+  (`GET /api/users/:username`, including `id:N` lookups), posts by id
+  (`GET /api/posts/id/:id`), quick links and GitHub issues could be read
+  without signing in. Posts by id now also follow post visibility, as the
+  forum does: author-only and specific-member posts return 404 to anyone else.
+  The web and mobile apps already send a token on these calls, so nothing
+  changes for members. Covered by the new `test/db/access-test.sh` in CI.
+- **Mobile app stuck on error screens after the session expired.** The server
+  answers an expired or invalid sign-in with 403 "Invalid or expired token", but
+  the app only signed out on 401, so every screen showed an error with a Retry
+  that could never work. The app now signs that account out (or switches to the
+  next signed-in account), as the web client already did. Other 403s, such as
+  permission denials, still keep you signed in. Ships with the next app build.
+- **Mobile: tapping a comment or mention notification now opens the post**
+  (#35). "New comment on your post" and mention notifications did nothing when
+  tapped in the list, and opened the Notifications screen when tapped as a push.
+  Both now open the post, group channel or task they refer to. Ships with the
+  next app build.
+- **Admins no longer get a direct message for every deliverable submitted
+  through the API** (#40). Each `POST /api/v1/deliverables` used to DM every
+  admin, and each DM became a push notification, so automated integrations
+  flooded admins' phones. API submissions still appear in the Investment
+  Tracker for review.
+- **Direct message threads open at the newest message** (#37). Opening a long
+  thread used to load its whole history and scroll down from the first message,
+  which could take seconds, and background refreshes pulled readers back down
+  while they read older messages. Threads now open at the bottom straight away,
+  load the newest 50 messages, and fetch earlier ones as you scroll up.
+  `GET /api/messages/conversations/:id` accepts optional `limit` (max 200) and
+  `before_id`; without them it returns the full history as before, so the
+  mobile app and other API clients are unaffected.
+- **Agreements: members are no longer sent to a team agreement that doesn't
+  apply to them** (#39). The profile page told every member without a signed
+  team agreement "You must sign the team agreement" and linked to `/agreement`,
+  even when their agreements are assigned individually, which could lead someone
+  to sign the wrong one. The profile now lists only agreements actually assigned
+  to you that still need signing, each linking to its own page; voided
+  signatures are shown greyed out with a "voided" badge. `/agreement` sends
+  members with individual assignments to their pending one (or the dashboard),
+  and shows "No agreement required" instead of an error when no team agreement
+  is active.
+- **Android: the release build compiles again, and a fresh `npm install` in
+  `mobile/` works** (#43). `@livekit/react-native-webrtc` 144.2.0 broke the
+  Android compile while iOS kept building, and `@livekit/react-native-expo-plugin`
+  1.2.0 failed npm's peer-dependency check. Both are now pinned (see
+  `docs/MOBILE_APP.md`). If you build the app yourself, delete
+  `mobile/node_modules` and run `npm install` again before the next build.
+- `build-android-apk.sh` no longer puts colour codes in the APK filename when
+  `FORCE_COLOR` is set.
+- **ElevenLabs tool sync updates every agent that uses the intranet tools**
+  (#45). `server/scripts/syncElevenLabsAgentTools.js` only gave new tools to
+  `ELEVENLABS_AGENT_ID`, so other voice agents sharing the toolset (for example
+  for the channel tools) never got them and told members they couldn't do things
+  the API supports. It now also adds any missing intranet tools to every agent
+  that already uses one of them, and to agents listed in the new optional
+  `ELEVENLABS_EXTRA_AGENT_IDS`, without changing their prompts. An agent that
+  can't be updated is reported and skipped (the script then exits non-zero).
+  Re-run the script after upgrading if you have more than one agent.
 - Changing the role of a user that doesn't exist now returns 404 instead of
   silently succeeding.
 
