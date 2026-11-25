@@ -77,7 +77,10 @@ Fresh database: `db/schema.sql` → `db/seed.sql` → `node scripts/create-admin
   `account_type='ai_agent'` plus an `ai_agents` row. @mentions in posts,
   comments and group chat, and DMs to an agent, queue a Claude reply
   (`ai_agent_replies`, with hourly caps). Agents never answer agents. Seed with
-  `node server/scripts/seedAiAgents.js`.
+  `node server/scripts/seedAiAgents.js`. Optional comms review: the
+  `AGENT_COMMS_REVIEW_HANDLE` agent reads new all-members posts (and the
+  `AGENT_COMMS_REVIEW_GROUPS` channels, hourly) and asks for missing context
+  (`source_type` `comms_review` / `channel_review`).
 - **`server/lib/scheduledEmails.js`** + `server/cron/scheduledEmailSender.js`:
   scheduled webmail sends (times in UTC).
 - **`server/lib/emailNotifications.js`**: whether a mention/comment/DM is also
