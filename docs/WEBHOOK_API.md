@@ -6,7 +6,7 @@ Agent-facing reference for the token-authenticated `/api/v1/` API on
 to the **member directory**, **tasks** (list / read / create / update),
 **sending and reading direct messages**, and **group chat channels** (list /
 read / post) — all attributed to the caller via the acting-user mechanism
-below. @-tagged AI agents reply in channels as well as in forum threads and DMs.
+below — plus **work reports** submitted to the Investment Tracker. @-tagged AI agents reply in channels as well as in forum threads and DMs.
 
 Responses are intentionally **small and paginated** — list endpoints return
 short summaries, not full post bodies. Fetch a single post by id only when you
@@ -513,6 +513,68 @@ mail server (webmail, phones, desktop clients) from mailboxes in
 `server/cron/ingestMailLog.js` fills hourly from the Postfix log (apply
 `server/migrations/add_smtp_sent_log.sql` first). Without that table, only
 webmail and scheduled sends (`sent_emails`) are counted.
+
+## Work reports (Investment Tracker)
+
+Owtranet doesn't measure anyone's work by itself: an instance has no work
+reports unless its owner wires them up. This endpoint is how. An integration
+(a nightly job, a GitHub hook, a time tracker) submits a report crediting a
+member, and it appears in the **Investment Tracker** for an admin to review and
+approve like any other deliverable. The member-activity endpoint above is a
+convenient source: read what people did, value it however your community
+agrees, and submit one report per member.
+
+```
+POST /api/v1/deliverables
+Content-Type: application/json
+
+{
+  "title": "Intranet activity 2026-11-24",
+  "content": "**Posts:** 2 × 20 min\n**Comments:** 3 × 20 min\n\nTotal: 1.7 h at $100/h",
+  "amount": 167,
+  "nominee_email": "sam@example.com",
+  "investment_category": "sweat_equity",
+  "category": "contribution",
+  "deliverable_date": "2026-11-24",
+  "tags": ["work-report"]
+}
+```
+
+| Field | Required | Rules |
+|-------|----------|-------|
+| `title` | yes | 5–255 characters |
+| `content` | yes | 10–50,000 characters of Markdown: the breakdown reviewers will see |
+| `amount` | no | ≥ 0, in the instance's base currency (`BASE_CURRENCY`). Leave it out to let an admin set the value: the report is then `pending_review` instead of `pending` |
+| `nominee_email` | no* | the member credited, matched on their **personal** email (`users.email`) |
+| `nominee_github` | no* | or their GitHub username, used when `nominee_email` is absent |
+| `investment_category` | no | `cash` (default), `sweat_equity`, `property`, `referral`. Sets the risk multiplier from the instance's investment settings; use `sweat_equity` for work |
+| `category` | no | `contribution` (default), `expense`, `customer`, `referral`, `other` |
+| `deliverable_date` | no | `YYYY-MM-DD`, default today |
+| `tags` | no | array of strings; `api-generated` is always added |
+
+\* Give one of them. **If neither matches an active member, the report is
+credited to the System account (user 1), not rejected,** so check
+`data.nominee_user_id` in the response and fix the address rather than
+resubmitting.
+
+Response `201`:
+`{ success, data: { deliverableId, title, amount, status, category, nominee_user_id, created_via } }`.
+
+Things to know when automating:
+
+- **Submissions are not de-duplicated.** Sending the same report twice creates
+  two deliverables. Keep track of what you've submitted (a state file, or the
+  ids you got back) so a retry or a re-run doesn't double-count.
+- **Reports start pending and are reviewed in the Investment Tracker.** API
+  reports don't notify admins individually (a busy integration would flood
+  them). Note that the default PM2 config runs `owtranet-auto-approve`
+  (`server/cron/autoApproveDeliverables.js`), which **approves anything still
+  pending after 6 weeks**. So reports nobody reviews, including ones credited to
+  the System account by a wrong address, end up counted. Review them, or don't
+  run that job.
+- Any valid API token can submit, so give the integration its own token
+  (personal vs integration tokens, above) and revoke it if the job is retired.
+- Read a report back with `GET /api/v1/deliverables/:id`.
 
 ## Out of scope
 

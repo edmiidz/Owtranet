@@ -75,6 +75,12 @@ distribution). Mobile fixes ship with the next app build.
 
 ### Changes
 
+- **Work reports are documented as a public API.** Owtranet doesn't track
+  anyone's work by itself; an instance that wants sweat-equity reports submits
+  them with `POST /api/v1/deliverables`. docs/WEBHOOK_API.md "Work reports"
+  covers the fields, how the member is matched, and the pitfalls (no
+  de-duplication, unknown addresses credit the System account, 6-week
+  auto-approve).
 - **Direct messages show the time of day** (#36). Instead of "3h ago" or a
   bare date, messages and the conversation list show `2:16 PM` for today,
   `Yesterday 3:40 PM`, or `2026-09-28 3:40 PM` for older messages. Hover for
