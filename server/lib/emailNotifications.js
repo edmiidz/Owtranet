@@ -6,7 +6,8 @@
  *   when_away        (default) only if they haven't used the web or mobile app in
  *                    the last EMAIL_NOTIFY_AWAY_MINUTES (default 10)
  *   when_signed_out  as when_away, and also not while they are signed in to the
- *                    mobile app (an active mobile_devices row: it gets the push)
+ *                    mobile app (an active mobile_devices row this server can
+ *                    push to: FCM / APNs configured for that token)
  *   never            never; in-app and push notifications only
  *
  * "Used the app" is users.last_active_at, stamped by touchUserActivity() from
@@ -79,9 +80,13 @@ function warnSchemaOnce(err) {
  * applied yet, this behaves as before (email is sent) rather than silently
  * dropping notifications.
  *
+ * `opts.canDeliverPush(token)` decides whether a registered mobile device can
+ * actually receive a push (default: this server's FCM / APNs configuration,
+ * server/lib/push.js). Tests pass their own.
+ *
  * @returns {Promise<{user: object|null, send: boolean, reason: string}>}
  */
-async function checkEmailNotification(db, userId) {
+async function checkEmailNotification(db, userId, { canDeliverPush = defaultCanDeliverPush } = {}) {
   const mins = awayMinutes();
   let rows;
   try {
@@ -115,17 +120,28 @@ async function checkEmailNotification(db, userId) {
   }
   if (mode === 'when_signed_out') {
     try {
-      const [[d]] = await db.execute(
-        'SELECT COUNT(*) AS n FROM mobile_devices WHERE user_id = ? AND is_active = 1',
+      const [devices] = await db.execute(
+        'SELECT push_token FROM mobile_devices WHERE user_id = ? AND is_active = 1',
         [userId]
       );
-      if (Number(d.n) > 0) return { user, send: false, reason: 'signed in to the mobile app' };
+      // A signed-in phone replaces the email only if a push can actually reach it.
+      if (devices.some(d => canDeliverPush(d.push_token))) {
+        return { user, send: false, reason: 'signed in to the mobile app' };
+      }
+      if (devices.length > 0) {
+        return { user, send: true, reason: "away (signed in to the mobile app, but this server can't send it push notifications)" };
+      }
     } catch (err) {
       // Instance without the mobile app tables: nobody can be signed in to it.
       if (err.code !== 'ER_NO_SUCH_TABLE') throw err;
     }
   }
   return { user, send: true, reason: 'away' };
+}
+
+// Loaded lazily so code that only stamps presence doesn't load the push senders.
+function defaultCanDeliverPush(token) {
+  return require('./push').canDeliverTo(token);
 }
 
 module.exports = {
