@@ -914,6 +914,26 @@ CREATE TABLE `post_editors` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `post_revisions` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `post_id` int NOT NULL,
+  `revision_number` int NOT NULL,
+  `title` varchar(500) NOT NULL,
+  `content` mediumtext NOT NULL,
+  `visibility` varchar(32) DEFAULT NULL,
+  `edited_by` int DEFAULT NULL,
+  `edited_via` varchar(150) DEFAULT NULL,
+  `change_note` varchar(500) DEFAULT NULL,
+  `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `unique_post_revision` (`post_id`,`revision_number`),
+  KEY `idx_pr_edited_by` (`edited_by`),
+  CONSTRAINT `post_revisions_ibfk_1` FOREIGN KEY (`post_id`) REFERENCES `posts` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `post_revisions_ibfk_2` FOREIGN KEY (`edited_by`) REFERENCES `users` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `post_tags` (
   `post_id` int NOT NULL,
   `tag_id` int NOT NULL,

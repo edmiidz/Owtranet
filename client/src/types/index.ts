@@ -81,6 +81,41 @@ export interface MentionCandidate {
   agent_tagline?: string | null;
 }
 
+export interface PostRevisionEditor {
+  id: number;
+  name: string;
+  username?: string;
+}
+
+// One saved version of a post. `editor` is null for the baseline revision of
+// a post that existed before history was recorded.
+export interface PostRevision {
+  revision_number: number;
+  title: string;
+  visibility: string | null;
+  edited_via: string | null;
+  change_note: string | null;
+  created_at: string;
+  content_length?: number;
+  editor: PostRevisionEditor | null;
+}
+
+export interface PostRevisionDiffLine {
+  type: 'same' | 'added' | 'removed';
+  text: string;
+}
+
+export interface PostRevisionDetail extends PostRevision {
+  content: string;
+  content_html: string;
+  previous_revision_number: number | null;
+  diff: {
+    title_changed: boolean;
+    previous_title: string | null;
+    lines: PostRevisionDiffLine[];
+  };
+}
+
 export interface Post {
   id: number;
   user_id: number;

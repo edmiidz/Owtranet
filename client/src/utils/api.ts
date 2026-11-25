@@ -7,6 +7,8 @@ import type {
   ApiResponse, 
   PaginatedResponse, 
   Post, 
+  PostRevision,
+  PostRevisionDetail,
   User, 
   Deliverable,
   EmailRequest,
@@ -59,6 +61,12 @@ api.interceptors.response.use(
     if (error.response?.status === 403 && error.response?.data?.requiresAgreement) {
       // Don't logout for agreement requirement errors
       // The AgreementPage component will handle this
+      return Promise.reject(error);
+    }
+
+    // A 403 marked keepSession means "you can't see this resource" (e.g. a post's
+    // version history), not "your session is invalid": let the page show it.
+    if (error.response?.status === 403 && error.response?.data?.keepSession) {
       return Promise.reject(error);
     }
 
@@ -169,6 +177,31 @@ export const postsApi = {
 
   deletePost: async (postId: number): Promise<{ message: string; postId: number }> => {
     const response = await api.delete(`/posts/${postId}`);
+    return response.data;
+  },
+
+  // Version history: author, co-editors and admins only.
+  getRevisions: async (postId: number): Promise<{
+    post: { id: number; title: string; slug: string };
+    current_revision: number | null;
+    revisions: PostRevision[];
+  }> => {
+    const response = await api.get(`/posts/${postId}/revisions`);
+    return response.data;
+  },
+
+  getRevision: async (postId: number, revisionNumber: number): Promise<{
+    post: { id: number; title: string; slug: string };
+    revision: PostRevisionDetail;
+  }> => {
+    const response = await api.get(`/posts/${postId}/revisions/${revisionNumber}`);
+    return response.data;
+  },
+
+  restoreRevision: async (postId: number, revisionNumber: number): Promise<{
+    message: string; postId: number; slug: string; revision_number: number | null;
+  }> => {
+    const response = await api.post(`/posts/${postId}/revisions/${revisionNumber}/restore`);
     return response.data;
   },
 
