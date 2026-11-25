@@ -2,7 +2,7 @@
 // The database is stubbed; test/db/upgrade-test.sh covers real MySQL.
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { checkEmailNotification, touchUserActivity, EMAIL_NOTIFICATION_MODES } = require('../server/lib/emailNotifications');
+const { checkEmailNotification, touchUserActivity, clearUserActivity, awayMinutes, EMAIL_NOTIFICATION_MODES } = require('../server/lib/emailNotifications');
 
 const sqlError = (code) => Object.assign(new Error(code), { code });
 
@@ -23,7 +23,10 @@ function fakeDb({ mode = 'when_away', recentlyActive = false, devices = 0, noMod
         return [[{ id: params[0], email: 'a@example.com', name: 'A', company_email: null,
           email_notification_preference: 'company', email_notification_mode: mode, recently_active: recentlyActive ? 1 : 0 }]];
       }
-      if (/^UPDATE users SET last_active_at/.test(sql)) return [{ affectedRows: 1 }];
+      if (/^UPDATE users SET last_active_at/.test(sql)) {
+        if (noModeColumn) throw sqlError('ER_BAD_FIELD_ERROR');
+        return [{ affectedRows: 1 }];
+      }
       throw new Error(`unexpected SQL: ${sql}`);
     },
   };
@@ -88,4 +91,23 @@ test('activity is written at most once a minute per user', () => {
   touchUserActivity(db, 99);
   touchUserActivity(db, 100);
   assert.equal(db.calls.filter(s => s.startsWith('UPDATE users SET last_active_at')).length, 2);
+});
+
+test('default away window is 10 minutes', async () => {
+  assert.equal(awayMinutes(), 10);
+  const db = fakeDb();
+  await checkEmailNotification(db, 7);
+  assert.match(db.calls[0], /INTERVAL 10 MINUTE/);
+});
+
+test('sign-out clears presence and holds off the next stamp', async () => {
+  const db = fakeDb();
+  await clearUserActivity(db, 123);
+  assert.deepEqual(db.calls, ['UPDATE users SET last_active_at = NULL WHERE id = ?']);
+  touchUserActivity(db, 123);   // e.g. a request already in flight from the tab that signed out
+  assert.equal(db.calls.length, 1);
+});
+
+test('sign-out on a database without the migration is a no-op', async () => {
+  await assert.doesNotReject(clearUserActivity(fakeDb({ noModeColumn: true }), 124));
 });

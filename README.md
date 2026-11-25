@@ -205,8 +205,9 @@ for the full list. The main groups are:
   and AI prompts.
 - **Outbound mail**: `SES_SMTP_*` works with any SMTP relay.
 - **Notification e-mails**: mentions, comments on your posts and direct
-  messages are e-mailed only while a member is away (no web or mobile activity
-  for `EMAIL_NOTIFY_AWAY_MINUTES`, default 30). Each member can change this
+  messages are e-mailed only while a member is away: signed out, or no browser
+  tab (visible or not) or mobile app open for `EMAIL_NOTIFY_AWAY_MINUTES`,
+  default 10. Each member can change this
   under *Email Notifications* on their profile: always, only when away, only
   when away and signed out of the mobile app, or never.
 - **Self-hosted mail**: `MAIL_*` and `DEFAULT_EMAIL_PROVIDER`. See

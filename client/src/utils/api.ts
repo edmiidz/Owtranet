@@ -825,6 +825,14 @@ export interface BadgeCounts {
   radio_unheard: number;
 }
 
+// Presence for notification emails: Layout sends a heartbeat while signed in;
+// sign-out (authStore.logout) ends it with POST /auth/logout.
+export const presenceApi = {
+  heartbeat: async (): Promise<void> => {
+    await api.post('/presence');
+  },
+};
+
 export const badgesApi = {
   getCounts: async (): Promise<BadgeCounts> => {
     const response = await api.get('/mobile/counts');

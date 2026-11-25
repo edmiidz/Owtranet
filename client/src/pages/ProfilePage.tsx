@@ -970,14 +970,14 @@ const ProfilePage: React.FC = () => {
                 {...register('email_notification_mode')}
                 className="form-input"
               >
-                <option value="when_away">Only when I'm away from the web and mobile app</option>
+                <option value="when_away">Only when I don't have the web or mobile app open</option>
                 <option value="when_signed_out">Only when I'm away and signed out of the mobile app</option>
                 <option value="always">Always, even while I'm using the app</option>
                 <option value="never">Never (in-app and push notifications only)</option>
               </select>
               <p className="mt-1 text-xs text-gray-500">
-                While you're using {companyName} on the web or the mobile app you already see notifications there, so by default no email is sent.
-                "Away" means no activity for {emailNotifyAwayMinutes} minutes. If you keep the mobile app signed in, push notifications reach you there,
+                While you have {companyName} open in a browser tab (even in the background) or in the mobile app you already see notifications there,
+                so by default no email is sent. "Away" means no tab or app open for {emailNotifyAwayMinutes} minutes, or signed out. If you keep the mobile app signed in, push notifications reach you there,
                 so you can choose to skip email until you sign out of it.
               </p>
               {errors.email_notification_mode && (

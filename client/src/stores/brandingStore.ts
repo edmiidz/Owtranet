@@ -29,7 +29,7 @@ export const useBrandingStore = create<BrandingState>((set, get) => ({
   baseCurrency: 'USD',
   emailProviders: DEFAULT_EMAIL_PROVIDERS,
   defaultEmailProvider: 'self_hosted',
-  emailNotifyAwayMinutes: 30,
+  emailNotifyAwayMinutes: 10,
   loaded: false,
 
   fetchBranding: async () => {
@@ -46,7 +46,7 @@ export const useBrandingStore = create<BrandingState>((set, get) => ({
           baseCurrency: (data.baseCurrency || 'USD').toUpperCase(),
           emailProviders: Array.isArray(data.emailProviders) && data.emailProviders.length > 0 ? data.emailProviders : DEFAULT_EMAIL_PROVIDERS,
           defaultEmailProvider: data.defaultEmailProvider || 'self_hosted',
-          emailNotifyAwayMinutes: Number(data.emailNotifyAwayMinutes) > 0 ? Number(data.emailNotifyAwayMinutes) : 30,
+          emailNotifyAwayMinutes: Number(data.emailNotifyAwayMinutes) > 0 ? Number(data.emailNotifyAwayMinutes) : 10,
           loaded: true,
         });
       }
