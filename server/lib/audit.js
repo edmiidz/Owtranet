@@ -40,7 +40,8 @@ const SENSITIVE_FIELDS = new Set([
 ]);
 
 // Successful writes that are not changes worth an audit row: read receipts,
-// lookups done over POST, playback progress, push-token registration.
+// lookups done over POST, playback progress, push-token registration, and the
+// presence heartbeat (every open tab sends one every couple of minutes).
 const WRITE_EXCLUDE = new Set([
   'PUT /api/messages/conversations/:conversationId/read',
   'PUT /api/group-chat/:groupId/read',
@@ -54,7 +55,8 @@ const WRITE_EXCLUDE = new Set([
   'POST /api/radio/listens/reset',
   'POST /api/mobile/devices',
   'DELETE /api/mobile/devices/:token',
-  'POST /api/mobile/ai/session'
+  'POST /api/mobile/ai/session',
+  'POST /api/presence'
 ]);
 
 // GET routes that are reads of one resource ({ type, id: param name }) or
