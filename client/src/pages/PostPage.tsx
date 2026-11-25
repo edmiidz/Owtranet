@@ -29,7 +29,8 @@ import {
   FileIcon,
   Download,
   Radio,
-  Bot
+  Bot,
+  History
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { postsApi } from '../utils/api';
@@ -1048,6 +1049,17 @@ Markdown formatting & keyboard shortcuts:
                 title="Edit post"
               >
                 <Edit3 className="h-5 w-5 text-blue-600" />
+              </button>
+            )}
+
+            {/* History Button (same people who can edit: author, admin, co-editor) */}
+            {currentUser && (post.can_edit || post.user_id === currentUser.id || currentUser.role === 'admin') && (
+              <button
+                onClick={() => navigate(`/forum/history/${post.id}`)}
+                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                title="Version history"
+              >
+                <History className="h-5 w-5 text-gray-600" />
               </button>
             )}
             

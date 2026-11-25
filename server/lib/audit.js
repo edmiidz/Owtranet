@@ -64,6 +64,11 @@ const ACCESS_RULES = {
   '/api/posts/:slug': { type: 'post', id: 'slug' },
   '/api/posts/id/:id': { type: 'post', id: 'id' },
   '/api/v1/forum/posts/:id': { type: 'post', id: 'id' },
+  // Post version history: reading an old revision is a read of the post.
+  '/api/posts/:id/revisions': { type: 'post', id: 'id' },
+  '/api/posts/:id/revisions/:n': { type: 'post', id: 'id' },
+  '/api/v1/forum/posts/:id/revisions': { type: 'post', id: 'id' },
+  '/api/v1/forum/posts/:id/revisions/:n': { type: 'post', id: 'id' },
   '/api/radio/posts/by-slug/:slug': { type: 'post', id: 'slug' },
   '/api/radio/segments/:id': { type: 'radio_segment', id: 'id' },
   '/api/v1/comments/:id': { type: 'comment', id: 'id' },

@@ -24,6 +24,8 @@ const EditPostPage: React.FC = () => {
   const [tags, setTags] = useState<string[]>([]);
   const [availableTags, setAvailableTags] = useState<any[]>([]);
   const [newTag, setNewTag] = useState('');
+  // Optional "why" for this edit, saved with the revision in the post's history
+  const [changeNote, setChangeNote] = useState('');
   const [attachment, setAttachment] = useState<{
     filename: string;
     originalName: string;
@@ -411,6 +413,7 @@ const EditPostPage: React.FC = () => {
           visibility,
           visible_to_users: visibility === 'specific_members' ? selectedUsers : [],
           ...(isOwner ? { editor_users: editorUsers } : {}),
+          ...(changeNote.trim() ? { change_note: changeNote.trim() } : {}),
           ...(attachment && !removeCurrentAttachment ? {
             attachment_filename: attachment.filename,
             attachment_original_name: attachment.originalName,
@@ -868,6 +871,22 @@ const EditPostPage: React.FC = () => {
                 Original attachment will be removed when you save.
               </p>
             )}
+          </div>
+
+          {/* Edit summary (saved with this version in the post's history) */}
+          <div>
+            <label htmlFor="change-note" className="block text-sm font-medium text-gray-700 mb-2">
+              Edit summary <span className="text-gray-400 font-normal">(optional)</span>
+            </label>
+            <input
+              id="change-note"
+              type="text"
+              value={changeNote}
+              onChange={(e) => setChangeNote(e.target.value)}
+              maxLength={500}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="What did you change, and why? Shown in the post's version history."
+            />
           </div>
 
           {/* Actions */}

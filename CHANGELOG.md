@@ -17,6 +17,9 @@ names them, `./deploy.sh` runs that check for you, and both are safe to re-run.
   channel fails.
 - `server/migrations/add_audit_trail.sql`: creates `audit_log` and `access_log`
   and copies your existing `activity_log` history into `audit_log`.
+- `server/migrations/add_post_revisions.sql`: creates `post_revisions` and stores
+  each existing post's current text as its first version. Without it, editing
+  posts still works but no history is kept, and the smoke test's history check fails.
 
 Optional new settings: `ELEVENLABS_EXTRA_AGENT_IDS` (voice agents to keep in sync with the
 intranet tools), `FIREBASE_ANDROID_APP_ID` / `FIREBASE_TESTER_GROUP` (Android tester
@@ -24,6 +27,15 @@ distribution). Mobile fixes ship with the next app build.
 
 ### Added
 
+- **Version history for forum posts.** Every save that changes a post's title,
+  content or visibility is kept as a numbered version, from the web, the API or a
+  restore. A **History** button on the post (for its author, co-editors and admins)
+  lists each version with who made it and when, shows what changed line by line,
+  and can **Restore** an earlier version; a restore is itself a new version, so it
+  can be undone. The edit form has an optional **Edit summary**. Scripts and agents
+  can read history with `GET /api/v1/forum/posts/:id/revisions[/:n]` (see
+  `docs/WEBHOOK_API.md`). Revisions keep the full text; `audit_log` still records
+  who changed which fields, and restores appear there as `post.update`.
 - **Publish your own build of the mobile app without editing `app.json`.** Keep your
   bundle ID, Apple team, domain, icons and `google-services.json` in a folder outside
   this repository and set `OWTRANET_INSTANCE=/path/to/it`; `mobile/app.config.js`

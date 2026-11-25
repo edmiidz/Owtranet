@@ -78,6 +78,15 @@ if [ -z "$ADMIN_ID" ]; then
 fi
 if [ -z "$ADMIN_ID" ]; then echo "❌ no admin user found in $DB_NAME"; exit 1; fi
 
+# Post version history needs a real post id, so it can't sit in the static list
+# above (a fresh instance has no posts). Check the newest post's history; a 500
+# here usually means server/migrations/add_post_revisions.sql isn't applied.
+LATEST_POST_ID=$(mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" -N -e \
+  "SELECT id FROM posts ORDER BY id DESC LIMIT 1" 2>/dev/null)
+if [ -n "$LATEST_POST_ID" ]; then
+  ENDPOINT_LIST="$ENDPOINT_LIST /api/posts/$LATEST_POST_ID/revisions"
+fi
+
 TOKEN=$(node -e '
   const jwt = require("jsonwebtoken");
   console.log(jwt.sign({ userId: Number(process.argv[1]), email: "smoke@test", role: "admin" },

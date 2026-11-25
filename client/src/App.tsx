@@ -27,6 +27,7 @@ import GithubDocPage from './pages/GithubDocPage';
 import MessagesPage from './pages/MessagesPage';
 import GroupChatPage from './pages/GroupChatPage';
 import EditPostPage from './pages/EditPostPage';
+import PostHistoryPage from './pages/PostHistoryPage';
 import PostTtsPage from './pages/PostTtsPage';
 import ForgotPasswordPage from './pages/ForgotPasswordPage';
 import ResetPasswordPage from './pages/ResetPasswordPage';
@@ -199,6 +200,7 @@ function App() {
           <Route path="forum/post/:slug/tts" element={<PostTtsPage />} />
           <Route path="forum/create" element={<CreatePostPage />} />
           <Route path="forum/edit/:slug" element={<EditPostPage />} />
+          <Route path="forum/history/:id" element={<PostHistoryPage />} />
           <Route path="tasks" element={<TasksPage />} />
           <Route path="tasks/create" element={<CreateTaskPage />} />
           <Route path="tasks/edit/:id" element={<EditTaskPage />} />

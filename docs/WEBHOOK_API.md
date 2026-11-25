@@ -156,8 +156,34 @@ PUT /api/v1/forum/posts/:id
 ```
 
 Body — all fields optional: `title` (5–200), `content` (10–50,000), `tags`
-(array, full replace), `visibility`, `priority`. A token may update **its own**
+(array, full replace), `visibility`, `priority`, `change_note` (≤ 500 chars, an
+optional "why" saved in the post's version history). A token may update **its own**
 posts; an admin-scoped token (`permissions.admin === true`) may update any post.
+
+### Version history
+
+Every save that changes a post's title, content or visibility is kept as a
+numbered revision, whether it came from the web or this API.
+
+```
+GET /api/v1/forum/posts/:id/revisions        → { post_id, revisions: [...] }   newest first, no bodies
+GET /api/v1/forum/posts/:id/revisions/:n     → { post_id, revision }           body + line diff vs the revision before
+```
+
+Each revision has `revision_number`, `title`, `visibility`, `editor`
+(`{id, name, username}`, or `null` for the baseline of a post that predates history),
+`edited_via` (`web`, `api:<token name>`, `restore` or `baseline`), `change_note`
+and `created_at`. The single-revision response adds `content`,
+`previous_revision_number` and `diff: { title_changed, previous_title, lines: [{type: 'same'|'added'|'removed', text}] }`.
+
+Readable by the post's author, its co-editors, and admin-scoped tokens; anyone else
+gets 403. **Restore is web-only** (`POST /api/posts/:id/revisions/:n/restore`, JWT),
+like delete. Restores are also written to `audit_log` as `post.update`.
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  https://intranet.example.com/api/v1/forum/posts/42/revisions
+```
 
 ### Delete — disabled
 

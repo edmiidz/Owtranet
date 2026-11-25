@@ -27,6 +27,7 @@ const { findMissing: findMissingSchema, formatReport: formatSchemaReport } = req
 const { EMAIL_NOTIFICATION_MODES, awayMinutes: emailNotifyAwayMinutes, touchUserActivity, checkEmailNotification } = require('./server/lib/emailNotifications');
 const { findUsersByEmail } = require('./server/lib/emailIdentity'); // Gmail dot-insensitive sign-in lookup
 const { canUserViewPost } = require('./server/lib/postVisibility');
+const postRevisions = require('./server/lib/postRevisions'); // post version history
 require('dotenv').config();
 
 if (!process.env.JWT_SECRET) {
@@ -3996,6 +3997,7 @@ app.post('/api/posts', authenticateToken, [
     );
     
     const postId = result.insertId;
+    await postRevisions.recordRevision(db, postId, { editedBy: req.user.userId, via: 'web' });
     
     // Process tags
     if (tags && tags.length > 0) {
@@ -4108,7 +4110,8 @@ app.put('/api/posts/:id', authenticateToken, [
       attachment_original_name,
       attachment_mime_type,
       attachment_size,
-      remove_attachment
+      remove_attachment,
+      change_note
     } = req.body;
 
     // Check if post exists and user has permission to edit
@@ -4192,7 +4195,11 @@ app.put('/api/posts/:id', authenticateToken, [
       updateParams = [title, content, contentHtml, visibility, id];
     }
 
+    await postRevisions.ensureBaseline(db, post);
     await db.execute(updateQuery, updateParams);
+    await postRevisions.recordRevision(db, parseInt(id), {
+      editedBy: req.user.userId, via: 'web', note: change_note
+    });
 
     const [oldTagRows] = await db.execute(
       'SELECT t.name FROM post_tags pt JOIN tags t ON t.id = pt.tag_id WHERE pt.post_id = ? ORDER BY t.name',
@@ -4309,6 +4316,137 @@ app.put('/api/posts/:id', authenticateToken, [
   } catch (error) {
     console.error('Edit post error:', error);
     res.status(500).json({ error: 'Failed to update post' });
+  }
+});
+
+// ---- Post version history ----
+// History is visible to whoever can edit the post: the author, co-editors and
+// admins. Old revisions can hold text that was removed on purpose, so it is not
+// opened up to every reader of the post. Revisions keep the full text so it can
+// be restored; audit_log keeps who changed which fields. Both are written.
+
+function parseRevisionParams(req, res) {
+  const postId = parseInt(req.params.id, 10);
+  const revisionNumber = req.params.n === undefined ? null : parseInt(req.params.n, 10);
+  if (!Number.isInteger(postId) || postId <= 0
+    || (req.params.n !== undefined && (!Number.isInteger(revisionNumber) || revisionNumber <= 0))) {
+    res.status(400).json({ error: 'Invalid post or revision number' });
+    return null;
+  }
+  return { postId, revisionNumber };
+}
+
+async function loadPostForHistory(postId) {
+  const [rows] = await db.execute(
+    'SELECT id, user_id, title, content, visibility, slug, created_at, updated_at FROM posts WHERE id = ?',
+    [postId]
+  );
+  return rows[0] || null;
+}
+
+const HISTORY_FORBIDDEN = 'Only the author, co-editors and admins can see the history of this post';
+// `keepSession: true` tells the web client this 403 is "not allowed to see this",
+// not "your session is invalid", so it shows the message instead of signing out.
+
+// List a post's revisions (newest first, no bodies)
+app.get('/api/posts/:id/revisions', authenticateToken, async (req, res) => {
+  try {
+    const params = parseRevisionParams(req, res);
+    if (!params) return;
+    const post = await loadPostForHistory(params.postId);
+    if (!post) return res.status(404).json({ error: 'Post not found' });
+    if (!(await canEditPost(post, req.user))) {
+      return res.status(403).json({ error: HISTORY_FORBIDDEN, keepSession: true });
+    }
+
+    const revisions = await postRevisions.listRevisions(db, post.id);
+    res.json({
+      post: { id: post.id, title: post.title, slug: post.slug },
+      current_revision: revisions.length > 0 ? revisions[0].revision_number : null,
+      revisions
+    });
+  } catch (error) {
+    console.error('List post revisions error:', error);
+    res.status(500).json({ error: 'Failed to load post history' });
+  }
+});
+
+// One revision with its body and a line diff against the revision before it
+app.get('/api/posts/:id/revisions/:n', authenticateToken, async (req, res) => {
+  try {
+    const params = parseRevisionParams(req, res);
+    if (!params) return;
+    const post = await loadPostForHistory(params.postId);
+    if (!post) return res.status(404).json({ error: 'Post not found' });
+    if (!(await canEditPost(post, req.user))) {
+      return res.status(403).json({ error: HISTORY_FORBIDDEN, keepSession: true });
+    }
+
+    const revision = await postRevisions.getRevision(db, post.id, params.revisionNumber);
+    if (!revision) return res.status(404).json({ error: 'Revision not found' });
+    revision.content_html = markdownToHtml(revision.content || '');
+    res.json({ post: { id: post.id, title: post.title, slug: post.slug }, revision });
+  } catch (error) {
+    console.error('Get post revision error:', error);
+    res.status(500).json({ error: 'Failed to load revision' });
+  }
+});
+
+// Restore an earlier revision's title and content. Visibility is left alone
+// (co-editors may restore but may not change who can see the post). The
+// restore is itself recorded as a new revision, so it can be undone too, and
+// goes into audit_log as a post.update like any other edit.
+app.post('/api/posts/:id/revisions/:n/restore', authenticateToken, async (req, res) => {
+  try {
+    const params = parseRevisionParams(req, res);
+    if (!params) return;
+    const post = await loadPostForHistory(params.postId);
+    if (!post) return res.status(404).json({ error: 'Post not found' });
+    if (!(await canEditPost(post, req.user))) {
+      return res.status(403).json({ error: 'Permission denied', keepSession: true });
+    }
+
+    const [revRows] = await db.execute(
+      'SELECT title, content FROM post_revisions WHERE post_id = ? AND revision_number = ?',
+      [post.id, params.revisionNumber]
+    );
+    if (revRows.length === 0) return res.status(404).json({ error: 'Revision not found' });
+    const target = revRows[0];
+
+    if (target.title === post.title && (target.content || '') === (post.content || '')) {
+      return res.status(400).json({ error: 'That revision matches the current version' });
+    }
+
+    await postRevisions.ensureBaseline(db, post);
+    await db.execute(
+      'UPDATE posts SET title = ?, content = ?, content_html = ?, updated_at = NOW() WHERE id = ?',
+      [target.title, target.content || '', markdownToHtml(target.content || ''), post.id]
+    );
+    const newRevision = await postRevisions.recordRevision(db, post.id, {
+      editedBy: req.user.userId,
+      via: 'restore',
+      note: `Restored revision ${params.revisionNumber}`
+    });
+
+    await audit.change(req, {
+      action: 'post.update', entityType: 'post', entityId: post.id,
+      changes: audit.diff(post, { title: target.title, content: target.content || '' }, ['title', 'content']),
+      reason: `Restored revision ${params.revisionNumber}`,
+      metadata: {
+        slug: post.slug, author_id: post.user_id,
+        restored_revision: params.revisionNumber, new_revision: newRevision
+      }
+    });
+
+    res.json({
+      message: `Restored revision ${params.revisionNumber}`,
+      postId: post.id,
+      slug: post.slug,
+      revision_number: newRevision
+    });
+  } catch (error) {
+    console.error('Restore post revision error:', error);
+    res.status(500).json({ error: 'Failed to restore revision' });
   }
 });
 
@@ -8490,6 +8628,7 @@ app.post('/api/v1/forum/posts', authenticateApiToken, [
     );
     
     const postId = result.insertId;
+    await postRevisions.recordRevision(db, postId, { editedBy: userId, via: `api:${req.apiToken.name}` });
     
     // Add system tag and provided tags
     const allTags = ['system-generated', ...tags];
@@ -9071,7 +9210,8 @@ app.put('/api/v1/forum/posts/:id', authenticateApiToken, [
       content, 
       tags, 
       visibility,
-      priority = 'normal'
+      priority = 'normal',
+      change_note
     } = req.body;
 
     // Build update query dynamically
@@ -9099,10 +9239,16 @@ app.put('/api/v1/forum/posts/:id', authenticateApiToken, [
       updateFields.push('updated_at = NOW()');
       updateValues.push(postId);
 
+      await postRevisions.ensureBaseline(db, existingPost);
       await db.execute(
         `UPDATE posts SET ${updateFields.join(', ')} WHERE id = ?`,
         updateValues
       );
+      await postRevisions.recordRevision(db, postId, {
+        editedBy: req.user ? req.user.userId : null,
+        via: `api:${req.apiToken.name}`,
+        note: change_note
+      });
     }
 
     // Update tags if provided
@@ -9163,6 +9309,50 @@ app.put('/api/v1/forum/posts/:id', authenticateApiToken, [
   } catch (error) {
     console.error('API update post error:', error);
     res.status(500).json({ error: 'Failed to update forum post' });
+  }
+});
+
+// Post version history over the token API. Read-only: restore is web-only,
+// like delete. Allowed for the post's author, a co-editor, or an admin token.
+async function canReadPostHistoryViaApi(post, req) {
+  if (req.apiToken && req.apiToken.permissions && req.apiToken.permissions.admin === true) return true;
+  return req.user ? canEditPost(post, req.user) : false;
+}
+
+const API_HISTORY_FORBIDDEN = 'Permission denied: only the author, co-editors and admins can read post history';
+
+app.get('/api/v1/forum/posts/:id/revisions', authenticateApiToken, async (req, res) => {
+  try {
+    const params = parseRevisionParams(req, res);
+    if (!params) return;
+    const post = await loadPostForHistory(params.postId);
+    if (!post) return res.status(404).json({ error: 'Post not found' });
+    if (!(await canReadPostHistoryViaApi(post, req))) {
+      return res.status(403).json({ error: API_HISTORY_FORBIDDEN });
+    }
+    const revisions = await postRevisions.listRevisions(db, post.id);
+    res.json({ success: true, data: { post_id: post.id, revisions } });
+  } catch (error) {
+    console.error('API list post revisions error:', error);
+    res.status(500).json({ error: 'Failed to load post history' });
+  }
+});
+
+app.get('/api/v1/forum/posts/:id/revisions/:n', authenticateApiToken, async (req, res) => {
+  try {
+    const params = parseRevisionParams(req, res);
+    if (!params) return;
+    const post = await loadPostForHistory(params.postId);
+    if (!post) return res.status(404).json({ error: 'Post not found' });
+    if (!(await canReadPostHistoryViaApi(post, req))) {
+      return res.status(403).json({ error: API_HISTORY_FORBIDDEN });
+    }
+    const revision = await postRevisions.getRevision(db, post.id, params.revisionNumber);
+    if (!revision) return res.status(404).json({ error: 'Revision not found' });
+    res.json({ success: true, data: { post_id: post.id, revision } });
+  } catch (error) {
+    console.error('API get post revision error:', error);
+    res.status(500).json({ error: 'Failed to load revision' });
   }
 });
 
