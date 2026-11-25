@@ -340,6 +340,21 @@ export interface SearchAdapter {
   rules: SearchAdapterRule[];
 }
 
+// A document from enterprise search (an OpenSearch index filled by an external
+// indexer such as the Retrieval Suite). `snippet` marks matched words with
+// \u0001 … \u0002 instead of HTML; render it with the markers, never as HTML.
+export interface EnterpriseSearchResult {
+  id: string;
+  title: string;
+  url: string;
+  snippet: string;
+  source: string | null;
+  source_url: string | null;
+  modified: string | null;
+  file_extension: string | null;
+  score: number | null;
+}
+
 export interface SearchResults {
   posts?: Post[];
   comments?: Comment[];
@@ -349,6 +364,10 @@ export interface SearchResults {
   ledger?: LedgerSearchResult[];
   docs?: GithubDoc[];
   agents?: AiAgentSearchResult[];
+  // Present only when the instance has enterprise search configured.
+  enterprise?: EnterpriseSearchResult[];
+  enterpriseLabel?: string | null;
+  enterpriseError?: string;
 }
 
 export interface Quicklink {

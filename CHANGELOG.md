@@ -18,11 +18,23 @@ names them, `./deploy.sh` runs that check for you, and both are safe to re-run.
 - `server/migrations/add_audit_trail.sql`: creates `audit_log` and `access_log`
   and copies your existing `activity_log` history into `audit_log`.
 
-Optional new settings: `ELEVENLABS_EXTRA_AGENT_IDS` (voice agents to keep in sync with the
+Optional new settings: `OPENSEARCH_URL` and friends (enterprise search, see below and
+[docs/ENTERPRISE_SEARCH.md](docs/ENTERPRISE_SEARCH.md)), `ELEVENLABS_EXTRA_AGENT_IDS` (voice agents to keep in sync with the
 intranet tools), `FIREBASE_ANDROID_APP_ID` / `FIREBASE_TESTER_GROUP` (Android tester
 distribution). Mobile fixes ship with the next app build.
 
 ### Added
+
+- **Enterprise search across other systems.** Set `OPENSEARCH_URL` (and a read-only
+  OpenSearch user) and Search gets a section of results from an OpenSearch index that
+  an external indexer fills, such as the RheinInsights Retrieval Suite, whose connectors
+  crawl websites, SharePoint, Confluence, Google Drive and more. Results are filtered by
+  each document's `allow_acl` / `deny_acl`: members see documents shared with everyone,
+  plus their own when the Suite's security-trimming API is configured
+  (`RETRIEVAL_SUITE_URL`, `RETRIEVAL_SUITE_ACL_TOKEN`). The section has its own tab,
+  named by `ENTERPRISE_SEARCH_LABEL`. If OpenSearch is slow or down, intranet search
+  still answers and the section says the source is unavailable. Off by default; no
+  migration.
 
 - **Publish your own build of the mobile app without editing `app.json`.** Keep your
   bundle ID, Apple team, domain, icons and `google-services.json` in a folder outside

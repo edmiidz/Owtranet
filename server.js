@@ -27,6 +27,7 @@ const { findMissing: findMissingSchema, formatReport: formatSchemaReport } = req
 const { EMAIL_NOTIFICATION_MODES, awayMinutes: emailNotifyAwayMinutes, touchUserActivity, checkEmailNotification } = require('./server/lib/emailNotifications');
 const { findUsersByEmail } = require('./server/lib/emailIdentity'); // Gmail dot-insensitive sign-in lookup
 const { canUserViewPost } = require('./server/lib/postVisibility');
+const enterpriseSearch = require('./server/lib/enterpriseSearch'); // OpenSearch (e.g. Retrieval Suite) results in /api/search
 require('dotenv').config();
 
 if (!process.env.JWT_SECRET) {
@@ -7187,6 +7188,22 @@ app.get('/api/search', authenticateToken, async (req, res) => {
     const { q, type = 'all' } = req.query;
     
     const results = {};
+
+    // Enterprise search (OpenSearch, filled by an external indexer such as the
+    // Retrieval Suite). Started first so it runs alongside the MySQL queries;
+    // enterpriseSearch.search() never throws and narrows to public documents
+    // if the member's permissions cannot be looked up.
+    const enterprisePromise = q && (type === 'all' || type === 'enterprise') && enterpriseSearch.isEnabled()
+      ? db.execute('SELECT email, company_email FROM users WHERE id = ?', [req.user.userId])
+          .then(([rows]) => enterpriseSearch.search({
+            q,
+            identities: rows[0] ? [rows[0].company_email, rows[0].email] : [],
+          }))
+          .catch((err) => {
+            console.error('Enterprise search identity lookup failed:', err.message);
+            return { label: null, results: [], error: 'unavailable' };
+          })
+      : null;
     
     // Search posts
     if (type === 'all' || type === 'posts') {
@@ -7562,6 +7579,13 @@ app.get('/api/search', authenticateToken, async (req, res) => {
       results.docs = docs;
     }
 
+    if (enterprisePromise) {
+      const enterprise = await enterprisePromise;
+      results.enterprise = enterprise.results;
+      results.enterpriseLabel = enterprise.label;
+      if (enterprise.error) results.enterpriseError = enterprise.error;
+    }
+
     // Log search (only if there was a query)
     if (req.user && q) {
       const totalResults = (results.posts?.length || 0) +
@@ -7570,7 +7594,8 @@ app.get('/api/search', authenticateToken, async (req, res) => {
                           (results.investments?.length || 0) +
                           (results.tasks?.length || 0) +
                           (results.ledger?.length || 0) +
-                          (results.docs?.length || 0);
+                          (results.docs?.length || 0) +
+                          (results.enterprise?.length || 0);
 
       await db.execute(
         'INSERT INTO search_history (user_id, query, results_count) VALUES (?, ?, ?)',

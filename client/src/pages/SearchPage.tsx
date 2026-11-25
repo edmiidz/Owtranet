@@ -1,11 +1,29 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Search, User, FileText, MessageSquare, Filter, DollarSign, CheckSquare, Receipt, BookOpen, ExternalLink, Bot } from 'lucide-react';
+import { Search, User, FileText, MessageSquare, Filter, DollarSign, CheckSquare, Receipt, BookOpen, ExternalLink, Bot, Globe } from 'lucide-react';
 import { searchApi } from '../utils/api';
-import type { SearchResults, Post, User as UserType, Investment, Task, LedgerSearchResult, GithubDoc } from '../types';
+import type { SearchResults, Post, User as UserType, Investment, Task, LedgerSearchResult, GithubDoc, EnterpriseSearchResult } from '../types';
 
-type SearchType = 'all' | 'posts' | 'users' | 'agents' | 'comments' | 'investments' | 'tasks' | 'ledger' | 'docs';
-const SEARCH_TYPES: SearchType[] = ['all', 'posts', 'users', 'agents', 'comments', 'investments', 'tasks', 'ledger', 'docs'];
+type SearchType = 'all' | 'posts' | 'users' | 'agents' | 'comments' | 'investments' | 'tasks' | 'ledger' | 'docs' | 'enterprise';
+const SEARCH_TYPES: SearchType[] = ['all', 'posts', 'users', 'agents', 'comments', 'investments', 'tasks', 'ledger', 'docs', 'enterprise'];
+
+// Enterprise snippets mark matches with \u0001 … \u0002 (see server/lib/enterpriseSearch.js).
+// Split on the markers and render text nodes, so indexed content can never inject HTML.
+const renderSnippet = (snippet: string) =>
+  snippet.split('\u0001').map((part, i) => {
+    if (i === 0) return <React.Fragment key={i}>{part}</React.Fragment>;
+    const [match, ...rest] = part.split('\u0002');
+    return (
+      <React.Fragment key={i}>
+        <mark className="bg-yellow-100 text-gray-900 rounded px-0.5">{match}</mark>
+        {rest.join('')}
+      </React.Fragment>
+    );
+  });
+
+const hostOf = (url: string) => {
+  try { return new URL(url).host; } catch { return url; }
+};
 
 // Where each indexed doc actually lives, for the provenance line on a result.
 // 'exec' rows only reach a client at all when the viewer is an admin — the
@@ -112,7 +130,8 @@ const SearchPage: React.FC = () => {
     const ledgerCount = results.ledger?.length || 0;
     const docCount = results.docs?.length || 0;
     const agentCount = results.agents?.length || 0;
-    return postCount + userCount + commentCount + investmentCount + taskCount + ledgerCount + docCount + agentCount;
+    const enterpriseCount = results.enterprise?.length || 0;
+    return postCount + userCount + commentCount + investmentCount + taskCount + ledgerCount + docCount + agentCount + enterpriseCount;
   };
 
   const getFilteredUsers = () => {
@@ -310,6 +329,19 @@ const SearchPage: React.FC = () => {
             <BookOpen className="h-4 w-4 inline mr-1" />
             Docs ({results.docs?.length || 0})
           </button>
+          {results.enterpriseLabel && (
+            <button
+              onClick={() => handleTypeChange('enterprise')}
+              className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                searchType === 'enterprise'
+                  ? 'bg-blue-500 text-white'
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              }`}
+            >
+              <Globe className="h-4 w-4 inline mr-1" />
+              {results.enterpriseLabel} ({results.enterprise?.length || 0})
+            </button>
+          )}
         </div>
       </div>
 
@@ -715,6 +747,47 @@ const SearchPage: React.FC = () => {
                   </div>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* Enterprise Results — documents from other systems (websites,
+              SharePoint, Drive, …) indexed into OpenSearch by an external
+              indexer. The server has already filtered them to what this member
+              may see; links open the original system. */}
+          {results.enterpriseLabel && (searchType === 'all' || searchType === 'enterprise') && (results.enterprise?.length || results.enterpriseError || searchType === 'enterprise') && query.trim() && (
+            <div className="card p-6">
+              <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
+                <Globe className="h-5 w-5 mr-2" />
+                {results.enterpriseLabel} ({results.enterprise?.length || 0})
+              </h2>
+              {results.enterpriseError ? (
+                <p className="text-sm text-gray-600">This search source is unavailable right now. Intranet results above are unaffected.</p>
+              ) : results.enterprise && results.enterprise.length > 0 ? (
+                <div className="space-y-4">
+                  {results.enterprise.map((doc: EnterpriseSearchResult) => (
+                    <div key={doc.id} className="border border-gray-200 rounded-lg p-4 hover:bg-gray-50 transition-colors">
+                      <h3 className="font-medium text-gray-900 mb-1">
+                        <a href={doc.url} target="_blank" rel="noopener noreferrer" className="hover:text-blue-600 transition-colors inline-flex items-center">
+                          {doc.title}
+                          <ExternalLink className="h-3.5 w-3.5 ml-1.5 flex-shrink-0" />
+                        </a>
+                      </h3>
+                      {doc.snippet && (
+                        <p className="text-gray-600 text-sm mb-2">{renderSnippet(doc.snippet)}…</p>
+                      )}
+                      <div className="flex flex-wrap items-center text-xs text-gray-500 gap-x-4 gap-y-1">
+                        <span className="px-2 py-0.5 rounded-full font-medium bg-teal-100 text-teal-800">
+                          {doc.source || hostOf(doc.source_url || doc.url)}
+                        </span>
+                        <span className="truncate max-w-xs" title={doc.url}>{hostOf(doc.url)}</span>
+                        {doc.modified && <span>{new Date(doc.modified).toLocaleDateString('en-CA')}</span>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-gray-600">No matches.</p>
+              )}
             </div>
           )}
         </div>
