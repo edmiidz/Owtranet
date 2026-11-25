@@ -43,4 +43,15 @@ function isPushToken(t) {
   return apns.isApnsToken(t) || fcm.isPushToken(t);
 }
 
-module.exports = { sendPushToUsers, sendToDevices, isPushToken };
+/**
+ * Can this server actually deliver a push to this device token? An APNs token
+ * needs APNs configured and an FCM token needs FCM credentials. A registered
+ * device on an instance without push credentials receives nothing.
+ */
+function canDeliverTo(t) {
+  if (apns.isApnsToken(t)) return apns.isConfigured();
+  if (fcm.isPushToken(t)) return fcm.isConfigured();
+  return false;
+}
+
+module.exports = { sendPushToUsers, sendToDevices, isPushToken, canDeliverTo };

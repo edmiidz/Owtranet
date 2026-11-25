@@ -206,4 +206,9 @@ function close() {
   for (const s of Object.values(sessions)) { try { s.close(); } catch { /* ignore */ } }
 }
 
-module.exports = { sendToDevices, isApnsToken, close };
+/** True when APNs is configured, i.e. iOS pushes can be sent. */
+function isConfigured() {
+  return !!loadConfig();
+}
+
+module.exports = { sendToDevices, isApnsToken, close, isConfigured };

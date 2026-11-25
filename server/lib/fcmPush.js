@@ -195,4 +195,9 @@ async function sendPushToUsers(db, userIds, msg) {
   return sendToDevices(db, devices, msg);
 }
 
-module.exports = { sendPushToUsers, sendToDevices, isPushToken };
+/** True when FCM credentials are configured, i.e. Android pushes can be sent. */
+function isConfigured() {
+  return !!loadCredentials();
+}
+
+module.exports = { sendPushToUsers, sendToDevices, isPushToken, isConfigured };

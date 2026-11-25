@@ -5,14 +5,15 @@ const mysql = require('mysql2/promise');
 const { checkEmailNotification } = require('../../server/lib/emailNotifications');
 
 const CASES = [
-  // id,    mode,              last_active_at,               mobile device, expected send
-  [900001, 'when_away',       'NOW()',                      false, false],
-  [900002, 'when_away',       'NOW() - INTERVAL 31 MINUTE', false, true],
-  [900003, 'when_away',       'NULL',                       true,  true],
-  [900004, 'when_signed_out', 'NOW() - INTERVAL 2 HOUR',    true,  false],
-  [900005, 'when_signed_out', 'NOW() - INTERVAL 2 HOUR',    false, true],
-  [900006, 'always',          'NOW()',                      true,  true],
-  [900007, 'never',           'NULL',                       false, false],
+  // id,    mode,              last_active_at,               mobile device, push reaches it, expected send
+  [900001, 'when_away',       'NOW()',                      false, true,  false],
+  [900002, 'when_away',       'NOW() - INTERVAL 31 MINUTE', false, true,  true],
+  [900003, 'when_away',       'NULL',                       true,  true,  true],
+  [900004, 'when_signed_out', 'NOW() - INTERVAL 2 HOUR',    true,  true,  false],
+  [900008, 'when_signed_out', 'NOW() - INTERVAL 2 HOUR',    true,  false, true],
+  [900005, 'when_signed_out', 'NOW() - INTERVAL 2 HOUR',    false, true,  true],
+  [900006, 'always',          'NOW()',                      true,  true,  true],
+  [900007, 'never',           'NULL',                       false, true,  false],
 ];
 
 (async () => {
@@ -42,11 +43,12 @@ const CASES = [
           [id, String(id).padStart(64, '0')]);
       }
     }
-    for (const [id, mode, lastActive, device, want] of CASES) {
-      const r = await checkEmailNotification(db, id);
+    for (const [id, mode, lastActive, device, reachable, want] of CASES) {
+      // "push reaches it" stands in for this server's FCM / APNs configuration.
+      const r = await checkEmailNotification(db, id, { canDeliverPush: () => reachable });
       const ok = r.send === want;
       if (!ok) failed++;
-      console.log(`${ok ? '✅' : '❌'} ${mode.padEnd(15)} active=${lastActive.padEnd(27)} mobile=${device ? 'yes' : 'no '} → email=${r.send} (${r.reason})`);
+      console.log(`${ok ? '✅' : '❌'} ${mode.padEnd(15)} active=${lastActive.padEnd(27)} mobile=${device ? (reachable ? 'yes ' : 'yes, no push') : 'no  '} → email=${r.send} (${r.reason})`);
     }
   } finally {
     await clean().catch(() => {});

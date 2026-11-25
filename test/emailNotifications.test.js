@@ -6,8 +6,13 @@ const { checkEmailNotification, touchUserActivity, clearUserActivity, awayMinute
 
 const sqlError = (code) => Object.assign(new Error(code), { code });
 
-/** Fake mysql2 pool: one user row, optional active mobile device, optional missing schema. */
-function fakeDb({ mode = 'when_away', recentlyActive = false, devices = 0, noModeColumn = false, noDevicesTable = false } = {}) {
+const IOS_TOKEN = 'a'.repeat(64);
+const ANDROID_TOKEN = 'f'.repeat(152);
+const pushReaches = () => true;
+
+/** Fake mysql2 pool: one user row, optional active mobile devices, optional missing schema. */
+function fakeDb({ mode = 'when_away', recentlyActive = false, devices = 0, tokens, noModeColumn = false, noDevicesTable = false } = {}) {
+  const deviceTokens = tokens || Array.from({ length: devices }, () => IOS_TOKEN);
   const calls = [];
   return {
     calls,
@@ -15,7 +20,7 @@ function fakeDb({ mode = 'when_away', recentlyActive = false, devices = 0, noMod
       calls.push(sql);
       if (/FROM mobile_devices/.test(sql)) {
         if (noDevicesTable) throw sqlError('ER_NO_SUCH_TABLE');
-        return [[{ n: devices }]];
+        return [deviceTokens.map(push_token => ({ push_token }))];
       }
       if (/email_notification_mode/.test(sql) && noModeColumn) throw sqlError('ER_BAD_FIELD_ERROR');
       if (/FROM users/.test(sql)) {
@@ -47,7 +52,9 @@ const cases = [
 
 for (const [mode, active, device, want] of cases) {
   test(`mode=${mode} active=${active} mobile=${device} → send=${want}`, async () => {
-    const r = await checkEmailNotification(fakeDb({ mode, recentlyActive: active, devices: device ? 1 : 0 }), 7);
+    // These cases model an instance whose push is configured.
+    const r = await checkEmailNotification(fakeDb({ mode, recentlyActive: active, devices: device ? 1 : 0 }), 7,
+      { canDeliverPush: pushReaches });
     assert.equal(r.send, want, r.reason);
     assert.equal(r.user.id, 7);
   });
@@ -67,6 +74,37 @@ test('database without the migration still emails (fails open)', async () => {
   const r = await checkEmailNotification(fakeDb({ noModeColumn: true }), 7);
   assert.equal(r.send, true);
   assert.equal(r.user.email, 'a@example.com');
+});
+
+test('when_signed_out: a phone this server cannot push to does not stop the email', async () => {
+  const r = await checkEmailNotification(fakeDb({ mode: 'when_signed_out', devices: 1 }), 7,
+    { canDeliverPush: () => false });
+  assert.equal(r.send, true);
+  assert.match(r.reason, /can't send it push notifications/);
+});
+
+test('when_signed_out: one reachable device among several is enough', async () => {
+  const seen = [];
+  const canDeliverPush = t => { seen.push(t); return t === ANDROID_TOKEN; };
+  const r = await checkEmailNotification(fakeDb({ mode: 'when_signed_out', tokens: [IOS_TOKEN, ANDROID_TOKEN] }), 7,
+    { canDeliverPush });
+  assert.equal(r.send, false);
+  assert.deepEqual(seen, [IOS_TOKEN, ANDROID_TOKEN]);
+});
+
+test('when_signed_out by default uses the push configuration (none here → email)', async () => {
+  const saved = ['FCM_SERVICE_ACCOUNT_JSON', 'FCM_SERVICE_ACCOUNT_FILE', 'APNS_KEY_FILE', 'APNS_KEY_ID', 'APNS_TEAM_ID', 'APNS_BUNDLE_ID']
+    .filter(k => process.env[k] !== undefined);
+  assert.deepEqual(saved, [], 'test environment must not have push credentials');
+  const r = await checkEmailNotification(fakeDb({ mode: 'when_signed_out', tokens: [IOS_TOKEN, ANDROID_TOKEN] }), 7);
+  assert.equal(r.send, true);
+});
+
+test('when_away ignores mobile devices entirely', async () => {
+  const db = fakeDb({ mode: 'when_away', devices: 2 });
+  const r = await checkEmailNotification(db, 7, { canDeliverPush: pushReaches });
+  assert.equal(r.send, true);
+  assert.ok(!db.calls.some(sql => /mobile_devices/.test(sql)));
 });
 
 test('instance without mobile_devices table: when_signed_out still emails', async () => {

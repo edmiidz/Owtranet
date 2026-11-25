@@ -82,6 +82,13 @@ distribution). Mobile fixes ship with the next app build.
 
 ### Fixes
 
+- **"Signed out of the mobile app" no longer swallows emails on instances
+  without push.** With *Only when I'm away and signed out of the mobile app*, any
+  registered phone stopped the email, even when this server has no FCM / APNs
+  credentials and the phone never receives a push, so the notification reached
+  nobody. Now a phone counts only if a push can actually be sent to it (FCM for
+  Android tokens, APNs for iOS); otherwise the email goes out as for *Only when
+  I'm away*. Instances with push configured behave as before.
 - **No more notification emails while you have the intranet open in a
   background tab** (#60). With *Only when I'm away* (the default), a member
   counted as away 30 minutes after their tab went into the background, because
