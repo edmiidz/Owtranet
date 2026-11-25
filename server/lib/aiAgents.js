@@ -14,10 +14,14 @@
  * reply in the agent's persona, and posts it as a threaded comment by the agent.
  *
  * AGENT_CATALOG is the source of truth; server/scripts/seedAiAgents.js upserts
- * it into the database (run on each instance after add_ai_agents.sql). Edit the
- * catalog (and personaFor) to add your own agents.
+ * it into the database (run on each instance after add_ai_agents.sql). It is the
+ * built-in agents plus, when INSTANCE_DIR/agents.js exists, the instance's own
+ * agents and personas (see docs/PLUGINS.md "Agents and personas"), so an
+ * instance adds or replaces agents without editing this file.
  */
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const Anthropic = require('@anthropic-ai/sdk');
 
 const AGENT_MODEL = process.env.AGENT_REPLY_MODEL || 'claude-opus-5';
@@ -62,7 +66,7 @@ const COMPANY_CONTEXT = `You work at ${COMPANY_NAME} and are part of its interna
 const VOICE_AGENT_NAME = process.env.ELEVENLABS_AGENT_NAME || 'Assistant';
 const VOICE_AGENT_HANDLE = VOICE_AGENT_NAME.toLowerCase().replace(/[^a-z0-9_]/g, '') || 'voice';
 
-const AGENT_CATALOG = [
+const BUILTIN_AGENTS = [
   {
     handle: 'assistant',
     name: 'Assistant',
@@ -86,9 +90,92 @@ const AGENT_CATALOG = [
   }] : [])
 ];
 
+const AGENT_KINDS = ['role', 'voice', 'system'];
+const AGENT_HANDLE_RE = /^[a-z0-9_]{2,50}$/;
+
+/**
+ * Read INSTANCE_DIR/agents.js, if there is one. It exports an array of agents,
+ * `{ agents, includeDefaults }`, or a function returning either (called with
+ * { companyName, companyContext }). Returns null when there is no file. A file
+ * that fails to load is logged and ignored (the built-in agents still work),
+ * unless PLUGINS_STRICT=1, in which case it throws.
+ */
+function loadInstanceAgents({ dir = process.env.INSTANCE_DIR, strict = process.env.PLUGINS_STRICT === '1' } = {}) {
+  if (!dir) return null;
+  const file = path.join(path.resolve(dir), 'agents.js');
+  if (!fs.existsSync(file)) return null;
+  try {
+    let value = require(file);
+    if (typeof value === 'function') value = value({ companyName: COMPANY_NAME, companyContext: COMPANY_CONTEXT });
+    if (Array.isArray(value)) return { agents: value, includeDefaults: true };
+    if (value && Array.isArray(value.agents)) return { agents: value.agents, includeDefaults: value.includeDefaults !== false };
+    throw new Error('must export an array of agents, { agents, includeDefaults }, or a function returning one');
+  } catch (err) {
+    if (strict) throw new Error(`[ai-agents] ${file}: ${err.message}`);
+    console.error(`[ai-agents] ignoring ${file}: ${err.message}`);
+    return null;
+  }
+}
+
+/**
+ * Merge the built-in agents with an instance's. An instance agent with the same
+ * handle as a built-in one replaces its fields; new ones are appended in order.
+ * `includeDefaults: false` drops the built-ins. Invalid entries are skipped with
+ * a warning. Pure, so it can be tested without files.
+ * @returns {{ catalog: object[], warnings: string[] }}
+ */
+function mergeAgentCatalog(builtins, instance) {
+  const warnings = [];
+  if (!instance) return { catalog: builtins.slice(), warnings };
+  const own = [];
+  const seen = new Set();
+  for (const [i, a] of instance.agents.entries()) {
+    const where = `agents.js entry ${i}${a && a.handle ? ` (${a.handle})` : ''}`;
+    if (!a || typeof a !== 'object') { warnings.push(`${where}: not an object`); continue; }
+    if (!AGENT_HANDLE_RE.test(String(a.handle || ''))) { warnings.push(`${where}: handle must be 2-50 of a-z, 0-9, _`); continue; }
+    if (seen.has(a.handle)) { warnings.push(`${where}: duplicate handle`); continue; }
+    if (a.kind !== undefined && !AGENT_KINDS.includes(a.kind)) { warnings.push(`${where}: kind must be one of ${AGENT_KINDS.join(', ')}`); continue; }
+    if (a.persona !== undefined && typeof a.persona !== 'string' && typeof a.persona !== 'function') {
+      warnings.push(`${where}: persona must be a string or a function`); continue;
+    }
+    if (a.existingUserId !== undefined && !(Number.isInteger(a.existingUserId) && a.existingUserId > 0)) {
+      warnings.push(`${where}: existingUserId must be a positive integer`); continue;
+    }
+    seen.add(a.handle);
+    own.push(a);
+  }
+  const base = instance.includeDefaults ? builtins : [];
+  const byHandle = new Map(own.map(a => [a.handle, a]));
+  const merged = base.map(b => (byHandle.has(b.handle) ? { ...b, ...byHandle.get(b.handle) } : b));
+  const baseHandles = new Set(base.map(b => b.handle));
+  for (const a of own) {
+    if (baseHandles.has(a.handle)) continue;
+    merged.push({
+      kind: 'role', tagline: null, description: null,
+      elevenlabs_agent_id: null, skill_command: null, skill_url: null,
+      ...a,
+      name: a.name || a.handle
+    });
+  }
+  return { catalog: merged, warnings };
+}
+
+const { catalog: AGENT_CATALOG, warnings: catalogWarnings } = mergeAgentCatalog(BUILTIN_AGENTS, loadInstanceAgents());
+for (const w of catalogWarnings) console.warn(`[ai-agents] ${w}`);
+
 const INTRANET_FRAMING = `You are replying inside a thread on the company intranet forum (a Stack Overflow-style board) because a colleague tagged you with an @mention. Write the body of your reply comment only, in GitHub-flavoured markdown (short paragraphs, "-" bullets and numbered lists are fine; no headings, no sign-off, no subject line). Answer the person who tagged you, addressing them by first name, and use the post and the discussion so far as context. Keep it under about 250 words unless the question genuinely needs more. Never invent facts, metrics, incidents or commitments on behalf of others; if you do not know, say what would answer it. Do not @mention anyone (write names without the @ sign) — mentions notify people and summon agents. You are an AI agent and the thread shows that; do not pretend otherwise.`;
 
 function personaFor(agent) {
+  // An instance agent may bring its own persona: a string (appended to the
+  // company context) or a function (agent, { companyName, companyContext, catalog })
+  // returning the full system prompt.
+  const entry = AGENT_CATALOG.find(a => a.handle === agent.handle);
+  if (entry && entry.persona) {
+    const text = typeof entry.persona === 'function'
+      ? entry.persona(agent, { companyName: COMPANY_NAME, companyContext: COMPANY_CONTEXT, catalog: AGENT_CATALOG })
+      : `${COMPANY_CONTEXT}\n\n${entry.persona}`;
+    if (text && String(text).trim()) return String(text);
+  }
   if (agent.kind === 'voice') {
     return `${COMPANY_CONTEXT}
 
@@ -792,6 +879,9 @@ function unusablePassword() {
 
 module.exports = {
   AGENT_CATALOG,
+  BUILTIN_AGENTS,
+  loadInstanceAgents,
+  mergeAgentCatalog,
   AGENT_MODEL,
   composeAgentDmReply,
   composeAgentGroupReply,

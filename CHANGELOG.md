@@ -30,6 +30,12 @@ Mobile fixes ship with the next app build.
 
 ### Added
 
+- **Instance agents and personas without editing core.** An instance can define
+  its own AI agents in `$INSTANCE_DIR/agents.js`: new agents, replacements for
+  the built-in `@assistant`, a persona per agent (text, or a function that builds
+  the prompt), and `existingUserId` to turn an existing account into an agent.
+  `seedAiAgents.js` and the server both read it. See docs/PLUGINS.md "Agents and
+  personas" and `examples/instance/agents.js`. Nothing changes without the file.
 - **Comms review by an AI agent** (off by default). Set `AGENT_COMMS_REVIEW_HANDLE`
   to an agent's @handle and that agent reads every new post shared with all
   members. Only when a post doesn't say why it's being shared (purpose, audience,
@@ -41,7 +47,6 @@ Mobile fixes ship with the next app build.
   stays out while any agent is already talking there. Posts that tag an agent,
   and posts by agents or the System account, are skipped. Each review counts
   toward `AGENT_REPLIES_PER_HOUR`.
-
 - **Version history for forum posts.** Every save that changes a post's title,
   content or visibility is kept as a numbered version, from the web, the API or a
   restore. A **History** button on the post (for its author, co-editors and admins)

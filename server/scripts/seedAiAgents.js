@@ -19,6 +19,18 @@ const { AGENT_CATALOG, unusablePassword } = require('../lib/aiAgents');
 const DRY_RUN = process.argv.includes('--dry-run');
 const EMAIL_DOMAIN = process.env.COMPANY_EMAIL_DOMAIN || 'example.com';
 
+async function upsertAgentRow(db, userId, agent, index) {
+  await db.execute(
+    `INSERT INTO ai_agents (user_id, handle, kind, tagline, description, elevenlabs_agent_id, skill_command, skill_url, sort_order)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE handle = VALUES(handle), kind = VALUES(kind), tagline = VALUES(tagline),
+       description = VALUES(description), elevenlabs_agent_id = VALUES(elevenlabs_agent_id),
+       skill_command = VALUES(skill_command), skill_url = VALUES(skill_url), sort_order = VALUES(sort_order)`,
+    [userId, agent.handle, agent.kind, agent.tagline ?? null, agent.description ?? null, agent.elevenlabs_agent_id ?? null,
+     agent.skill_command ?? null, agent.skill_url ?? null, index]
+  );
+}
+
 async function main() {
   const db = await mysql.createConnection({
     host: process.env.DB_HOST || '127.0.0.1',
@@ -30,11 +42,24 @@ async function main() {
 
   for (const [index, agent] of AGENT_CATALOG.entries()) {
     let userId = null;
+    const profile = [agent.name, agent.tagline, agent.description, agent.avatar_url || `/ai-agents/${agent.handle}.svg`];
+
+    if (agent.existingUserId) {
+      // An existing account becomes this agent (e.g. an admin service account that
+      // already posts AI-written announcements). Its name and profile are left as they are.
+      const [[existing]] = await db.execute('SELECT id, name, account_type FROM users WHERE id = ?', [agent.existingUserId]);
+      if (!existing) throw new Error(`${agent.handle}: user ${agent.existingUserId} not found`);
+      userId = existing.id;
+      console.log(`${agent.handle}: existing user ${userId} (${existing.name}) → account_type ai_agent`);
+      if (!DRY_RUN) await db.execute(`UPDATE users SET account_type = 'ai_agent' WHERE id = ?`, [userId]);
+      if (!DRY_RUN) await upsertAgentRow(db, userId, agent, index);
+      continue;
+    }
+
     const [[user]] = await db.execute('SELECT id, account_type FROM users WHERE intranet_username = ?', [agent.handle]);
     if (user && user.account_type !== 'ai_agent') {
       throw new Error(`${agent.handle}: @${agent.handle} already belongs to human user ${user.id} — pick another handle`);
     }
-    const profile = [agent.name, agent.tagline, agent.description, agent.avatar_url || `/ai-agents/${agent.handle}.svg`];
     if (user) {
       userId = user.id;
       console.log(`${agent.handle}: updating user ${userId}`);
@@ -57,17 +82,7 @@ async function main() {
       }
     }
 
-    if (!DRY_RUN) {
-      await db.execute(
-        `INSERT INTO ai_agents (user_id, handle, kind, tagline, description, elevenlabs_agent_id, skill_command, skill_url, sort_order)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE handle = VALUES(handle), kind = VALUES(kind), tagline = VALUES(tagline),
-           description = VALUES(description), elevenlabs_agent_id = VALUES(elevenlabs_agent_id),
-           skill_command = VALUES(skill_command), skill_url = VALUES(skill_url), sort_order = VALUES(sort_order)`,
-        [userId, agent.handle, agent.kind, agent.tagline, agent.description, agent.elevenlabs_agent_id,
-         agent.skill_command, agent.skill_url, index]
-      );
-    }
+    if (!DRY_RUN) await upsertAgentRow(db, userId, agent, index);
   }
 
   await db.end();
