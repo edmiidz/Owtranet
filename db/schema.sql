@@ -117,7 +117,7 @@ CREATE TABLE `agreements` (
 CREATE TABLE `ai_agent_replies` (
   `id` int NOT NULL AUTO_INCREMENT,
   `agent_user_id` int NOT NULL,
-  `source_type` enum('post','comment','direct_message','group_message','comms_review') NOT NULL,
+  `source_type` enum('post','comment','direct_message','group_message','comms_review','channel_review') NOT NULL,
   `source_id` int NOT NULL,
   `post_id` int DEFAULT NULL,
   `group_id` int DEFAULT NULL,

@@ -4090,6 +4090,8 @@ app.post('/api/posts', authenticateToken, [
       type: 'post', id: postId, postId, postAuthorId: req.user.userId, content,
       author: { userId: req.user.userId, name: req.user.name }
     });
+    // Comms review (AGENT_COMMS_REVIEW_HANDLE): asks the author for missing context.
+    await agentResponder.handleNewPost({ id: postId, authorId: req.user.userId, visibility, content });
     
     res.status(201).json({ 
       message: 'Post created',
@@ -14576,6 +14578,11 @@ async function startServer() {
   
   // Start GitHub sync scheduler
   startGitHubSyncScheduler();
+
+  // Comms review of group chat channels (AGENT_COMMS_REVIEW_GROUPS); the
+  // responder enforces its own per-channel cooldowns, so hourly is just a tick.
+  setTimeout(() => agentResponder.reviewChannels(), 5 * 60 * 1000);
+  setInterval(() => agentResponder.reviewChannels(), 60 * 60 * 1000);
   
   app.listen(PORT, () => {
     console.log(`Intranet server running on port ${PORT}`);

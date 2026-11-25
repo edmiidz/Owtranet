@@ -20,12 +20,27 @@ names them, `./deploy.sh` runs that check for you, and both are safe to re-run.
 - `server/migrations/add_post_revisions.sql`: creates `post_revisions` and stores
   each existing post's current text as its first version. Without it, editing
   posts still works but no history is kept, and the smoke test's history check fails.
+- `server/migrations/add_agent_comms_review.sql`: lets `ai_agent_replies` record
+  channel reviews. Needed only if you turn on the comms review (below).
 
 Optional new settings: `ELEVENLABS_EXTRA_AGENT_IDS` (voice agents to keep in sync with the
 intranet tools), `FIREBASE_ANDROID_APP_ID` / `FIREBASE_TESTER_GROUP` (Android tester
-distribution). Mobile fixes ship with the next app build.
+distribution), `AGENT_COMMS_REVIEW_HANDLE` / `AGENT_COMMS_REVIEW_GROUPS` (comms review).
+Mobile fixes ship with the next app build.
 
 ### Added
+
+- **Comms review by an AI agent** (off by default). Set `AGENT_COMMS_REVIEW_HANDLE`
+  to an agent's @handle and that agent reads every new post shared with all
+  members. Only when a post doesn't say why it's being shared (purpose, audience,
+  what readers should do, enough context) does it comment, asking the author two
+  or three specific questions; most posts get nothing. With
+  `AGENT_COMMS_REVIEW_GROUPS` (public channel ids) it also reads those channels
+  every hour and asks about the one recent message that most lacks context. It
+  waits for a conversation to settle, replies at most once a day per channel, and
+  stays out while any agent is already talking there. Posts that tag an agent,
+  and posts by agents or the System account, are skipped. Each review counts
+  toward `AGENT_REPLIES_PER_HOUR`.
 
 - **Version history for forum posts.** Every save that changes a post's title,
   content or visibility is kept as a numbered version, from the web, the API or a

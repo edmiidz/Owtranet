@@ -36,6 +36,25 @@ const MAX_DM_CHARS = 2000;
 const GROUP_PER_CHANNEL_HOURLY_LIMIT = parseInt(process.env.AGENT_GROUP_REPLIES_PER_CHANNEL_PER_HOUR || '6', 10);
 const MAX_GROUP_HISTORY = 30;
 const MAX_GROUP_CHARS = 2000;
+// Comms review: the agent with this handle reads every new all-members forum
+// post and comments only when the post doesn't say why it's being shared,
+// asking the author a few clarifying questions. Empty = off.
+const COMMS_REVIEW_HANDLE = (process.env.AGENT_COMMS_REVIEW_HANDLE || '').trim().toLowerCase();
+const COMMS_REVIEW_SKIP = 'NO_QUESTIONS';
+// The same reviewer also reads these group chat channels (comma-separated
+// group ids; public channels only). Each channel is reviewed at most every
+// CHANNEL_REVIEW_EVERY_HOURS and gets at most one unprompted reply per
+// CHANNEL_REPLY_COOLDOWN_HOURS, and none while any agent has spoken there
+// inside that window. Empty = off.
+const CHANNEL_REVIEW_GROUPS = (process.env.AGENT_COMMS_REVIEW_GROUPS || '')
+  .split(',').map(n => parseInt(n, 10)).filter(n => n > 0);
+const CHANNEL_REVIEW_EVERY_HOURS = parseInt(process.env.AGENT_CHANNEL_REVIEW_EVERY_HOURS || '6', 10);
+const CHANNEL_REPLY_COOLDOWN_HOURS = parseInt(process.env.AGENT_CHANNEL_REPLY_COOLDOWN_HOURS || '24', 10);
+// Only messages this recent count as new: anything older has usually been
+// handled already, and a question about "this morning" goes stale.
+const CHANNEL_FRESH_HOURS = parseInt(process.env.AGENT_CHANNEL_FRESH_HOURS || '6', 10);
+// Let a live conversation settle before weighing in.
+const CHANNEL_QUIET_MINUTES = 30;
 
 const COMPANY_NAME = process.env.COMPANY_NAME || 'Owtranet';
 const COMPANY_CONTEXT = `You work at ${COMPANY_NAME} and are part of its internal team intranet, where colleagues discuss work in forum threads, direct messages and group chat channels.`;
@@ -83,6 +102,24 @@ You are ${agent.name || 'Assistant'}, a helpful AI teammate. Answer questions cl
 const DM_FRAMING = `You are replying to a direct message on the company intranet — a private one-to-one chat between you and a colleague who opened it from your profile. Write the body of your reply only, in GitHub-flavoured markdown suitable for a chat bubble (short paragraphs, "-" bullets are fine; no headings, no sign-off, no subject line). Keep it conversational and brief — usually under about 150 words — unless the question genuinely needs more. Use the earlier messages as context and answer the latest one. Never invent facts, metrics, incidents or commitments on behalf of others; if you do not know, say what would answer it. Do not @mention anyone (write names without the @ sign). You are an AI agent and the chat shows that; do not pretend otherwise.`;
 
 const GROUP_FRAMING = `You are replying in a group chat channel on the company intranet because a colleague tagged you with an @mention. This is a multi-person channel, not a private DM — other members can see your reply and may already be discussing the topic. Write the body of your reply only, in GitHub-flavoured markdown suitable for a chat bubble (short paragraphs, "-" bullets are fine; no headings, no sign-off, no subject line). Keep it conversational and brief — usually under about 150 words — unless the question genuinely needs more. Use the recent channel history as context and answer the message that tagged you, addressing the person by first name. Never invent facts, metrics, incidents or commitments on behalf of others; if you do not know, say what would answer it. Do not @mention anyone (write names without the @ sign) — mentions notify people and summon agents. You are an AI agent and the channel shows that; do not pretend otherwise.`;
+
+const COMMS_REVIEW_FRAMING = `A colleague has just published the forum post below to every member of the company intranet. Nobody tagged you: as the owner of corporate communications you read every new company-wide post, and you speak up only when the post leaves its readers unable to tell why it is being shared.
+
+Judge the post against corporate comms basics:
+- Purpose: why is this being shared, and why now?
+- Audience: who is it for, and why does it matter to them?
+- Ask: what, if anything, should readers do — and by when?
+- Context: would a teammate who missed the conversation behind it understand it (what it refers to, links, owner)?
+
+Most posts are fine as they are. Short social posts, thanks, celebrations, replies to an obvious ongoing topic and posts whose purpose is clear from the title or first lines need nothing from you. If the post is clear enough, output exactly ${COMMS_REVIEW_SKIP} and nothing else.
+
+Otherwise write a comment on the post, addressed to the author by first name, in GitHub-flavoured markdown (no headings, no sign-off): one friendly sentence saying what you would like to understand, then two or three short, specific clarifying questions drawn from what is actually missing in this post — not a generic checklist. You may end with a one-line suggestion of what an opening sentence could cover. Keep it under about 120 words. Do not rewrite the post, grade it, lecture about best practice, or guess at the answers. You cannot open links or attachments — never claim to have read or clicked them. Never invent facts. Do not @mention anyone (write names without the @ sign). You are an AI agent and the thread shows that; do not pretend otherwise.`;
+
+const CHANNEL_REVIEW_FRAMING = `You are reading a group chat channel on the company intranet. Nobody tagged you: as the owner of corporate communications you look over each busy channel now and then, and you speak up only when a message leaves the channel unable to tell what it is about. This is a multi-person channel; other members can see your reply.
+
+Consider only the messages marked NEW. Look for one that announces, asks or decides something but leaves teammates without the context to act on it: what it refers to, who it is for, what is being asked and by when, or who owns it. Most chat needs nothing from you. Banter, thanks, quick back-and-forth between people who clearly share the context, questions someone has already answered and anything whose meaning is clear from the surrounding messages need nothing. Never reply to a check-in or nudge aimed at someone who already knows what it refers to ("we on for this morning?", "you around?", "done yet?", "call now?") or to a message whose moment has passed: those are between the people involved, and they have almost certainly sorted it out. If nothing needs you, output exactly ${COMMS_REVIEW_SKIP} and nothing else.
+
+Otherwise pick the single message that most needs it. Start your output with a line containing exactly REPLY_TO <id> (the id of that message as shown in the transcript), then on the following lines write your chat reply, addressed to its author by first name, in GitHub-flavoured markdown suitable for a chat bubble (no headings, no sign-off): one friendly sentence on what you would like to understand, then one or two short, specific questions drawn from what is actually missing. Keep it under about 80 words. Do not lecture about best practice, grade the message, or guess at the answers. You cannot open links or attachments; never claim to have read them. Never invent facts. Do not @mention anyone (write names without the @ sign). You are an AI agent and the channel shows that; do not pretend otherwise.`;
 
 let _client = null;
 function getClient() {
@@ -179,6 +216,63 @@ ${transcript}
 
 You were tagged by ${triggerAuthorName} (first name: ${firstName(triggerAuthorName)}). Write your reply to them now.`;
   return callClaude(`${personaFor(agent)}\n\n${GROUP_FRAMING}`, userMsg);
+}
+
+/** The comms reviewer's answer about a post: null when it has no questions. */
+function parseCommsReview(text) {
+  const s = String(text || '').trim();
+  return !s || s.includes(COMMS_REVIEW_SKIP) ? null : s;
+}
+
+/**
+ * The comms reviewer's answer about a channel: `REPLY_TO <id>` on the first
+ * line, then the reply. Anything else (including NO_QUESTIONS) means nothing
+ * to say: { replyTo: null, text: null }.
+ */
+function parseChannelReview(text) {
+  const s = String(text || '');
+  const match = s.match(/^\s*REPLY_TO\s+(\d+)\s*\n([\s\S]+)$/);
+  if (s.includes(COMMS_REVIEW_SKIP) || !match || !match[2].trim()) return { replyTo: null, text: null };
+  return { replyTo: parseInt(match[1], 10), text: match[2].trim() };
+}
+
+/**
+ * The comms reviewer's take on a freshly published post. Returns { text, model }
+ * where text is null when the post needs no questions.
+ */
+async function composeCommsReview(agent, { post }) {
+  const attachment = post.attachment_original_name ? `\nAttachment: ${post.attachment_original_name}` : '';
+  const userMsg = `New forum post: "${post.title}" by ${post.author_name} (first name: ${firstName(post.author_name)})${attachment}
+"""
+${clip(post.content, MAX_POST_CHARS) || '(no text)'}
+"""
+
+Reply with ${COMMS_REVIEW_SKIP} or your comment.`;
+  const { text, model } = await callClaude(`${personaFor(agent)}\n\n${COMMS_REVIEW_FRAMING}`, userMsg);
+  return { text: parseCommsReview(text), model };
+}
+
+/**
+ * The comms reviewer's look at a channel. `history` = recent messages
+ * oldest-first as { id, sender_id, sender_name, content, created_at };
+ * those with id > `sinceId` are new. Returns { replyTo, text, model } where
+ * replyTo/text are null when nothing needs a question.
+ */
+async function composeChannelReview(agent, { history, groupName, sinceId }) {
+  const transcript = history.map(m => {
+    const who = m.sender_id === agent.user_id ? `${agent.name} (you)` : m.sender_name;
+    const tag = m.id > sinceId ? ' NEW' : '';
+    return `--- [${m.id}]${tag} ${who}, ${new Date(m.created_at).toISOString().slice(0, 16).replace('T', ' ')}\n${clip(m.content, MAX_GROUP_CHARS)}`;
+  }).join('\n\n');
+  const userMsg = `Channel: #${groupName}
+
+Recent messages, oldest first:
+
+${transcript}
+
+Reply with ${COMMS_REVIEW_SKIP}, or REPLY_TO <id> followed by your reply.`;
+  const { text, model } = await callClaude(`${personaFor(agent)}\n\n${CHANNEL_REVIEW_FRAMING}`, userMsg);
+  return { ...parseChannelReview(text), model };
 }
 
 // @handle tokens, ignoring e-mail addresses (name@domain) and repeats.
@@ -504,7 +598,191 @@ function createAgentResponder({ getDb, createComment, sendDirectMessage, postGro
     }
   }
 
-  return { handleMentions, handleDirectMessage, handleGroupMention };
+  /**
+   * Called after a member creates a post from the web/mobile forum (not the v1
+   * system-generated path). `post` = { id, authorId, visibility, content }.
+   * If AGENT_COMMS_REVIEW_HANDLE is set, that agent reviews the post once
+   * (ai_agent_replies source_type 'comms_review') and comments only when the
+   * post lacks context. Fire-and-forget; never throws.
+   */
+  async function handleNewPost(post) {
+    if (!COMMS_REVIEW_HANDLE || post.visibility !== 'all_members') return;
+    try {
+      // Someone already brought an agent in; don't pile on.
+      if ((await findTaggedAgents(post.content)).length > 0) return;
+
+      const [[author]] = await db.execute('SELECT account_type, role FROM users WHERE id = ?', [post.authorId]);
+      if (!author || author.account_type === 'ai_agent' || author.role === 'system') return;
+
+      const [[agent]] = await db.execute(
+        `SELECT a.user_id, a.handle, u.name, u.github_username, u.intranet_username, u.role
+           FROM ai_agents a JOIN users u ON u.id = a.user_id
+          WHERE a.handle = ? AND a.responds_to_mentions = 1 AND u.account_type = 'ai_agent'`,
+        [COMMS_REVIEW_HANDLE]
+      );
+      if (!agent || agent.user_id === post.authorId) return;
+
+      const [[{ total }]] = await db.execute(
+        `SELECT COUNT(*) AS total FROM ai_agent_replies WHERE created_at > NOW() - INTERVAL 1 HOUR`
+      );
+      const limited = total >= GLOBAL_HOURLY_LIMIT;
+      const [result] = await db.execute(
+        `INSERT IGNORE INTO ai_agent_replies (agent_user_id, source_type, source_id, post_id, requested_by, status)
+         VALUES (?, 'comms_review', ?, ?, NULL, ?)`,
+        [agent.user_id, post.id, post.id, limited ? 'rate_limited' : 'pending']
+      );
+      if (result.affectedRows === 0) return;
+      if (limited) {
+        console.warn(`[ai-agents] ${agent.handle} comms review rate limited on post ${post.id}`);
+        return;
+      }
+      setImmediate(() => runCommsReview(result.insertId, agent, post.id));
+    } catch (err) {
+      console.error(`[ai-agents] could not queue comms review for post ${post.id}:`, err.message);
+    }
+  }
+
+  async function runCommsReview(replyId, agent, postId) {
+    try {
+      const [[post]] = await db.execute(
+        `SELECT p.id, p.title, p.content, p.attachment_original_name, u.name AS author_name
+           FROM posts p JOIN users u ON u.id = p.user_id WHERE p.id = ?`,
+        [postId]
+      );
+      if (!post) throw new Error('Post no longer exists');
+
+      const { text, model } = await composeCommsReview(agent, { post });
+      if (!text) {
+        await db.execute(
+          `UPDATE ai_agent_replies SET status = 'no_action', model = ?, completed_at = NOW() WHERE id = ?`,
+          [model, replyId]
+        );
+        console.log(`[ai-agents] ${agent.handle} comms review: post ${postId} is clear`);
+        return;
+      }
+
+      // createComment notifies the post author.
+      const { commentId } = await createComment(postId, {
+        userId: agent.user_id,
+        name: agent.name,
+        github_username: agent.github_username,
+        intranet_username: agent.intranet_username,
+        role: agent.role
+      }, text, null, { fromAgent: true });
+      await db.execute(
+        `UPDATE ai_agent_replies SET status = 'replied', reply_comment_id = ?, model = ?, completed_at = NOW() WHERE id = ?`,
+        [commentId, model, replyId]
+      );
+      console.log(`[ai-agents] ${agent.handle} asked for context on post ${postId} (comment ${commentId})`);
+    } catch (err) {
+      console.error(`[ai-agents] ${agent.handle} comms review ${replyId} failed:`, err.message);
+      await db.execute(
+        `UPDATE ai_agent_replies SET status = 'failed', error = ?, completed_at = NOW() WHERE id = ?`,
+        [String(err.message).slice(0, 500), replyId]
+      ).catch(() => {});
+    }
+  }
+
+  /**
+   * Periodic comms review of the AGENT_COMMS_REVIEW_GROUPS channels by the
+   * AGENT_COMMS_REVIEW_HANDLE agent (server.js runs it hourly). Every review
+   * is logged in ai_agent_replies as source_type 'channel_review' with
+   * source_id = the newest message read, so a message is never reviewed twice
+   * and the cooldowns below are just counts over that table. Never throws.
+   */
+  async function reviewChannels() {
+    if (!COMMS_REVIEW_HANDLE || CHANNEL_REVIEW_GROUPS.length === 0) return;
+    try {
+      const [[agent]] = await db.execute(
+        `SELECT a.user_id, a.handle, u.name
+           FROM ai_agents a JOIN users u ON u.id = a.user_id
+          WHERE a.handle = ? AND a.responds_to_mentions = 1 AND u.account_type = 'ai_agent'`,
+        [COMMS_REVIEW_HANDLE]
+      );
+      if (!agent) return;
+      for (const groupId of CHANNEL_REVIEW_GROUPS) {
+        await reviewChannel(agent, groupId).catch(err =>
+          console.error(`[ai-agents] channel review of group ${groupId} failed:`, err.message));
+      }
+    } catch (err) {
+      console.error('[ai-agents] channel review failed:', err.message);
+    }
+  }
+
+  async function reviewChannel(agent, groupId) {
+    const [[group]] = await db.execute('SELECT name, visibility, is_active FROM `groups` WHERE id = ?', [groupId]);
+    if (!group || !group.is_active || group.visibility !== 'public') return;
+
+    const [[last]] = await db.execute(
+      `SELECT MAX(source_id) AS sinceId,
+              SUM(created_at > NOW() - INTERVAL ? HOUR) AS recentReviews,
+              SUM(status = 'replied' AND created_at > NOW() - INTERVAL ? HOUR) AS recentReplies
+         FROM ai_agent_replies WHERE source_type = 'channel_review' AND group_id = ?`,
+      [CHANNEL_REVIEW_EVERY_HOURS, CHANNEL_REPLY_COOLDOWN_HOURS, groupId]
+    );
+    if (Number(last.recentReviews) > 0 || Number(last.recentReplies) > 0) return;
+
+    // Any agent already in the conversation (tagged or not) = stay out.
+    const [[{ agentRecent }]] = await db.execute(
+      `SELECT COUNT(*) AS agentRecent FROM group_messages gm JOIN users u ON u.id = gm.sender_id
+        WHERE gm.group_id = ? AND u.account_type = 'ai_agent' AND gm.created_at > NOW() - INTERVAL ? HOUR`,
+      [groupId, CHANNEL_REPLY_COOLDOWN_HOURS]
+    );
+    if (agentRecent > 0) return;
+
+    // Only messages from the last CHANNEL_FRESH_HOURS count as new, even on the first run.
+    const [history] = await db.execute(
+      `SELECT * FROM (
+         SELECT gm.id, gm.sender_id, gm.content, gm.created_at, u.name AS sender_name, u.account_type
+           FROM group_messages gm JOIN users u ON u.id = gm.sender_id
+          WHERE gm.group_id = ? AND gm.is_deleted = 0
+          ORDER BY gm.id DESC LIMIT ${MAX_GROUP_HISTORY}
+       ) t ORDER BY t.id ASC`,
+      [groupId]
+    );
+    const freshAfter = Date.now() - CHANNEL_FRESH_HOURS * 3600 * 1000;
+    const sinceId = Number(last.sinceId) || 0;
+    const fresh = history.filter(m => m.id > sinceId && m.account_type !== 'ai_agent' && new Date(m.created_at).getTime() > freshAfter);
+    if (fresh.length === 0) return;
+    const newest = history[history.length - 1];
+    if (Date.now() - new Date(newest.created_at).getTime() < CHANNEL_QUIET_MINUTES * 60 * 1000) return;
+
+    const [result] = await db.execute(
+      `INSERT IGNORE INTO ai_agent_replies (agent_user_id, source_type, source_id, post_id, group_id, requested_by, status)
+       VALUES (?, 'channel_review', ?, NULL, ?, NULL, 'pending')`,
+      [agent.user_id, newest.id, groupId]
+    );
+    if (result.affectedRows === 0) return;
+    const replyId = result.insertId;
+
+    try {
+      const { replyTo, text, model } = await composeChannelReview(agent, {
+        history, groupName: group.name, sinceId: Math.max(sinceId, fresh[0].id - 1)
+      });
+      if (!text || !fresh.some(m => m.id === replyTo)) {
+        await db.execute(
+          `UPDATE ai_agent_replies SET status = 'no_action', model = ?, completed_at = NOW() WHERE id = ?`,
+          [model, replyId]
+        );
+        console.log(`[ai-agents] ${agent.handle} channel review: #${group.name} is clear`);
+        return;
+      }
+      const { messageId } = await postGroupMessage(groupId, agent.user_id, text.slice(0, 2000), replyTo);
+      await db.execute(
+        `UPDATE ai_agent_replies SET status = 'replied', reply_group_message_id = ?, model = ?, completed_at = NOW() WHERE id = ?`,
+        [messageId, model, replyId]
+      );
+      console.log(`[ai-agents] ${agent.handle} asked for context in #${group.name} (message ${messageId}, re ${replyTo})`);
+    } catch (err) {
+      await db.execute(
+        `UPDATE ai_agent_replies SET status = 'failed', error = ?, completed_at = NOW() WHERE id = ?`,
+        [String(err.message).slice(0, 500), replyId]
+      ).catch(() => {});
+      throw err;
+    }
+  }
+
+  return { handleMentions, handleDirectMessage, handleGroupMention, handleNewPost, reviewChannels };
 }
 
 // Random, unusable credential for agent accounts (they never log in).
@@ -518,8 +796,12 @@ module.exports = {
   composeAgentDmReply,
   composeAgentGroupReply,
   composeAgentReply,
+  composeChannelReview,
+  composeCommsReview,
   createAgentResponder,
   extractMentionTokens,
+  parseChannelReview,
+  parseCommsReview,
   personaFor,
   unusablePassword
 };
