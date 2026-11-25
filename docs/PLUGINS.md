@@ -76,6 +76,33 @@ intranet still starts. Set `PLUGINS_STRICT=1` to make any plugin failure abort
 startup instead (recommended once a deployment's plugins are stable, so a broken
 deploy fails loudly).
 
+## Agents and personas
+
+An instance defines its own AI agents in `$INSTANCE_DIR/agents.js`. Both the
+server and `server/scripts/seedAiAgents.js` read it, so the agents get user
+accounts and profiles and answer @mentions and DMs in their own persona. Core
+code is not edited. See `examples/instance/agents.js`.
+
+The file exports one of:
+- an array of agents;
+- `{ agents, includeDefaults }`, where `includeDefaults: false` drops the
+  built-in `@assistant` (and the voice agent);
+- a function returning either, called with `{ companyName, companyContext }`.
+
+| Field | |
+|---|---|
+| `handle` | Required. What people type after `@`: 2–50 of `a-z`, `0-9`, `_`. The same handle as a built-in agent replaces only the fields you set. |
+| `name`, `tagline`, `description` | Profile text. `name` defaults to the handle. |
+| `kind` | `role` (default), `voice` or `system`. |
+| `persona` | A string, appended to the company context; or a function `(agent, { companyName, companyContext, catalog })` returning the whole system prompt. Without one, the built-in persona for the agent's `kind` is used. |
+| `elevenlabs_agent_id`, `skill_command`, `skill_url`, `avatar_url` | Optional profile links. Avatars default to `/ai-agents/<handle>.svg`, which you can serve from `$INSTANCE_DIR/public`. |
+| `existingUserId` | Turn an existing account into this agent instead of creating one (e.g. an admin service account that already posts AI-written announcements). Its name and profile are kept. |
+
+After editing, run `node server/scripts/seedAiAgents.js --dry-run`, then
+without `--dry-run`, and restart the server. Invalid entries are skipped with a
+warning. A file that fails to load is logged and ignored, so the built-in agents
+keep working, unless `PLUGINS_STRICT=1`, in which case it stops startup.
+
 ## Static files
 
 If `$INSTANCE_DIR/public` exists it is served before `client/dist`, so a file
