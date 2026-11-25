@@ -21,12 +21,16 @@ import {
 import { useAuthStore } from '../stores/authStore';
 import { useBrandingStore } from '../stores/brandingStore';
 import { usesSelfHostedMail } from '../utils/emailProvider';
-import { notificationsApi, badgesApi, type BadgeCounts } from '../utils/api';
+import { notificationsApi, badgesApi, presenceApi, type BadgeCounts } from '../utils/api';
 import { BADGES_CHANGED_EVENT } from '../utils/badges';
 import { notificationHref } from '../utils/notifications';
 import type { Notification } from '../types';
 
 const COUNTS_POLL_MS = 30000;
+// Presence heartbeat for notification emails. Runs even in a background tab
+// (browsers throttle hidden-tab timers to about once a minute, which is fine);
+// must stay well under the server's EMAIL_NOTIFY_AWAY_MINUTES.
+const PRESENCE_HEARTBEAT_MS = 2 * 60 * 1000;
 
 const EMPTY_COUNTS: BadgeCounts = {
   unread_notifications: 0,
@@ -112,6 +116,16 @@ const Layout: React.FC = () => {
     } finally {
       setNotificationsLoading(false);
     }
+  }, [userId]);
+
+  // While this tab is open and signed in, tell the server we're here, visible or
+  // not, so mentions and DMs aren't also emailed (see server/lib/emailNotifications.js).
+  useEffect(() => {
+    if (!userId) return;
+    const beat = () => { presenceApi.heartbeat().catch(() => { /* next beat retries */ }); };
+    beat();
+    const timer = setInterval(beat, PRESENCE_HEARTBEAT_MS);
+    return () => clearInterval(timer);
   }, [userId]);
 
   // Poll counts while the tab is visible; refresh immediately when it becomes

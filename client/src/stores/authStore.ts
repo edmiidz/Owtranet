@@ -43,6 +43,17 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   logout: () => {
     console.log('[AUTH] Logout called');
     console.trace('[AUTH] Logout stack trace');
+    // End presence on the server so notification emails resume straight away.
+    // Plain fetch (api.ts imports this store), keepalive so it survives the
+    // redirect to /login. Failure is harmless: presence then just times out.
+    const token = get().token;
+    if (token) {
+      fetch('/api/auth/logout', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        keepalive: true,
+      }).catch(() => {});
+    }
     localStorage.removeItem('owtranet-token');
     localStorage.removeItem('owtranet-user');
     localStorage.removeItem('owtranet-redirect-after-login'); // Clean up any stored redirect

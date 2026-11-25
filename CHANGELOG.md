@@ -82,6 +82,18 @@ distribution). Mobile fixes ship with the next app build.
 
 ### Fixes
 
+- **No more notification emails while you have the intranet open in a
+  background tab** (#60). With *Only when I'm away* (the default), a member
+  counted as away 30 minutes after their tab went into the background, because
+  the web app stops polling hidden tabs, so every DM, mention and comment was
+  emailed as well. A signed-in tab now checks in every 2 minutes whether it is
+  visible or not (`POST /api/presence`), and signing out ends presence at once
+  (`POST /api/auth/logout`). Because the check-in is now reliable, the default
+  `EMAIL_NOTIFY_AWAY_MINUTES` drops from 30 to 10: emails resume 10 minutes
+  after you close the tab or your computer sleeps. Instances that set it in
+  `.env` keep their value; anything below 5 is too short for the 2-minute
+  check-in. A tab left open on an unattended computer now holds emails back;
+  members who want them anyway can pick *Always*.
 - **Read routes that skipped sign-in now require it.** Member profiles
   (`GET /api/users/:username`, including `id:N` lookups), posts by id
   (`GET /api/posts/id/:id`), quick links and GitHub issues could be read

@@ -4,14 +4,16 @@
  * Every member picks a users.email_notification_mode:
  *   always           email every time
  *   when_away        (default) only if they haven't used the web or mobile app in
- *                    the last EMAIL_NOTIFY_AWAY_MINUTES (default 30)
+ *                    the last EMAIL_NOTIFY_AWAY_MINUTES (default 10)
  *   when_signed_out  as when_away, and also not while they are signed in to the
  *                    mobile app (an active mobile_devices row: it gets the push)
  *   never            never; in-app and push notifications only
  *
  * "Used the app" is users.last_active_at, stamped by touchUserActivity() from
- * the JWT middleware. The web app polls while its tab is visible and the mobile
- * app while it is open, so the stamp stays fresh exactly while someone is there.
+ * the JWT middleware. A signed-in web tab sends POST /api/presence every couple
+ * of minutes even while it is in the background, and the mobile app polls while
+ * it is open, so the stamp stays fresh exactly while a session is open. Closing
+ * the tab, sleeping the computer or signing out (clearUserActivity) stops it.
  * Which address(es) to use is the separate email_notification_preference.
  */
 
@@ -20,7 +22,7 @@ const DEFAULT_EMAIL_NOTIFICATION_MODE = 'when_away';
 
 function awayMinutes() {
   const n = parseInt(process.env.EMAIL_NOTIFY_AWAY_MINUTES || '', 10);
-  return Number.isInteger(n) && n > 0 ? n : 30;
+  return Number.isInteger(n) && n > 0 ? n : 10;
 }
 
 // Write last_active_at at most once a minute per user per process, so polling
@@ -42,6 +44,23 @@ function touchUserActivity(db, userId) {
       console.error('Could not record user activity (is server/migrations/add_email_notification_mode.sql applied?):', err.message);
     }
   });
+}
+
+/**
+ * Sign-out: forget the user's presence so notification emails start again at
+ * once instead of after the away window. Another open session (a second tab, the
+ * mobile app) stamps it again on its next request, at most a minute later.
+ */
+async function clearUserActivity(db, userId) {
+  if (!db || !userId) return;
+  // Hold off this process's next stamp for the throttle interval, so the
+  // sign-out isn't undone by a request already in flight from the same tab.
+  lastActivityWrite.set(userId, Date.now());
+  try {
+    await db.execute('UPDATE users SET last_active_at = NULL WHERE id = ?', [userId]);
+  } catch (err) {
+    if (err.code !== 'ER_BAD_FIELD_ERROR') throw err;
+  }
 }
 
 let schemaWarningLogged = false;
@@ -114,5 +133,6 @@ module.exports = {
   awayMinutes,
   DEFAULT_EMAIL_NOTIFICATION_MODE,
   touchUserActivity,
+  clearUserActivity,
   checkEmailNotification
 };

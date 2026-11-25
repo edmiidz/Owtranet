@@ -24,7 +24,7 @@ const { instancePublicDir, createPluginRouter, loadPlugins } = require('./server
 const memberActivity = require('./server/lib/memberActivity'); // GET /api/v1/activity
 const { getRateToBase } = require('./server/lib/exchangeRates'); // base-currency-aware rates
 const { findMissing: findMissingSchema, formatReport: formatSchemaReport } = require('./server/lib/schemaCheck');
-const { EMAIL_NOTIFICATION_MODES, awayMinutes: emailNotifyAwayMinutes, touchUserActivity, checkEmailNotification } = require('./server/lib/emailNotifications');
+const { EMAIL_NOTIFICATION_MODES, awayMinutes: emailNotifyAwayMinutes, touchUserActivity, clearUserActivity, checkEmailNotification } = require('./server/lib/emailNotifications');
 const { findUsersByEmail } = require('./server/lib/emailIdentity'); // Gmail dot-insensitive sign-in lookup
 const { canUserViewPost } = require('./server/lib/postVisibility');
 const postRevisions = require('./server/lib/postRevisions'); // post version history
@@ -425,7 +425,8 @@ function authenticateToken(req, res, next) {
     req.user = user;
     // Presence for email notifications: anyone making signed-in web/mobile
     // requests is "here" and doesn't need those emails (throttled, fire-and-forget).
-    touchUserActivity(db, user.userId);
+    // Not on sign-out, which clears it.
+    if (req.path !== '/api/auth/logout') touchUserActivity(db, user.userId);
 
     // Check for pending_agreement role and enforce agreement requirement
     const allowedPaths = [
@@ -433,7 +434,8 @@ function authenticateToken(req, res, next) {
       '/api/agreements/sign',
       '/api/agreements/current',
       '/api/auth/logout',
-      '/api/auth/me'
+      '/api/auth/me',
+      '/api/presence'
     ];
 
     if (!allowedPaths.some(path => req.path === path || req.path.startsWith(path))) {
@@ -1595,6 +1597,24 @@ If you didn't make this change, contact an admin immediately as your account may
 });
 
 // Current signed-in user (also used by scripts/smoke-test.sh as a liveness probe)
+// Presence heartbeat: a signed-in web tab calls this every couple of minutes,
+// visible or not, so an open session counts as "here" for notification emails.
+// authenticateToken does the work (touchUserActivity); nothing else to do.
+app.post('/api/presence', authenticateToken, (req, res) => {
+  res.status(204).end();
+});
+
+// Sign-out. The JWT itself is stateless and dropped by the client; this only ends
+// presence so notification emails resume straight away.
+app.post('/api/auth/logout', authenticateToken, async (req, res) => {
+  try {
+    await clearUserActivity(db, req.user.userId);
+  } catch (err) {
+    console.error('Could not clear presence on logout:', err.message);
+  }
+  res.status(204).end();
+});
+
 app.get('/api/auth/me', authenticateToken, async (req, res) => {
   try {
     const [rows] = await db.execute(
@@ -8256,7 +8276,7 @@ Message Preview:
 
 Read and reply at: ${messageUrl}
 
-You're receiving this email because of your Email Notifications setting (by default, only while you're away from the intranet). You can change it on your profile.
+You're receiving this email because of your Email Notifications setting (by default, only while you don't have the intranet open in a browser or the mobile app). You can change it on your profile.
 
 Best regards,
 ${SITE_TEAM}`;
@@ -8284,7 +8304,7 @@ ${SITE_TEAM}`;
           
           <div style="background: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; border-radius: 8px; margin-bottom: 25px;">
             <p style="margin: 0; font-size: 14px; color: #856404;">
-              📧 <strong>Email Notifications:</strong> You're receiving this email because of your Email Notifications setting (by default, only while you're away from the intranet). You can change it on your profile.
+              📧 <strong>Email Notifications:</strong> You're receiving this email because of your Email Notifications setting (by default, only while you don't have the intranet open in a browser or the mobile app). You can change it on your profile.
             </p>
           </div>
           
